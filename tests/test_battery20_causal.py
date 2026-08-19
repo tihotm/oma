@@ -136,3 +136,8 @@ def test_10_mixed_script_namespace_spoof_is_currently_accepted():
 def test_11_duplicate_json_fields_are_blocked():
     result = strict_parse_json('{"n":1,"n":2}', _schema())
     assert result.decision is IdentityDecision.BLOCK
+
+
+def test_12_trailing_json_data_is_blocked():
+    result = strict_parse_json('{"n":1} {"n":2}', _schema())
+    assert result.decision is IdentityDecision.BLOCK
