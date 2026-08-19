@@ -3,6 +3,7 @@ from pathlib import Path
 import runpy
 
 from oma.execution import execute_composed_pipeline
+from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import SQLiteTerminalStore, SubjectStateDecision
 from oma.validation import ValidationDecision
 
@@ -16,6 +17,12 @@ def initialized_store(path, item):
     store = SQLiteTerminalStore(path)
     result = store.initialize_subject_state(item.commit_state)
     assert result.decision is SubjectStateDecision.WRITTEN
+    retry = SQLiteRetryLedger(path)
+    assert retry.initialize(
+        item.retry_policy,
+        item.retry_domain,
+        item.retry_events[0],
+    ).decision is RetryLedgerDecision.WRITTEN
     return store
 
 
@@ -72,7 +79,6 @@ def test_authoritative_forward_drift_is_stale_even_if_caller_supplies_old_curren
     update = store.advance_subject_state(item.commit_state.state_version, advanced)
     assert update.decision is SubjectStateDecision.WRITTEN
 
-    # The caller still supplies the old state that exactly matches the snapshot.
     lied = replace(item, commit_state=item.commit_state)
     result = execute_composed_pipeline(lied, store)
     assert result.result.decision is ValidationDecision.STALE
@@ -100,7 +106,19 @@ def test_blocked_prerequisite_never_writes_database(tmp_path):
 
 def test_missing_authoritative_state_cannot_commit(tmp_path):
     item = policy_enabled_input()
+    path = tmp_path / "oma.db"
+    SQLiteRetryLedger(path).initialize(item.retry_policy, item.retry_domain, item.retry_events[0])
+    store = SQLiteTerminalStore(path)
+    result = execute_composed_pipeline(item, store)
+    assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
+    assert result.result.decision is ValidationDecision.BLOCK
+    assert store.count() == 0
+
+
+def test_missing_authoritative_retry_history_cannot_commit(tmp_path):
+    item = policy_enabled_input()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
+    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
     result = execute_composed_pipeline(item, store)
     assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
     assert result.result.decision is ValidationDecision.BLOCK
