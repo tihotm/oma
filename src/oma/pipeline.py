@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from typing import Any
 
 from .acceptance import AcceptanceDecision, evaluate_acceptance
@@ -88,40 +87,40 @@ class ComposedPipelineResult:
     observations: tuple[ValidationObservation, ...]
 
 
-def _evidence_root(
-    node_id: str,
-    decision: ValidationDecision,
-    reasons: tuple[str, ...] = (),
-) -> str:
-    payload = "\0".join((node_id, decision.value, *reasons)).encode("utf-8")
-    return hashlib.sha256(b"oma:pipeline:v1\0" + payload).hexdigest()
-
-
 def _evidence_payload_digest(item: Any) -> str:
-    payload = "\0".join(
-        (
-            item.evidence_id,
-            item.obligation_id,
-            item.subject_id,
-            item.subject_state_id,
-            item.verification_context_id,
-            item.policy_bundle_id,
-            "1" if item.passed else "0",
-        )
-    ).encode("utf-8")
-    return hashlib.sha256(b"oma:evidence:v1\0" + payload).hexdigest()
+    return policy_object_root(
+        "evidence-payload",
+        {
+            "evidence_id": item.evidence_id,
+            "obligation_id": item.obligation_id,
+            "subject_id": item.subject_id,
+            "subject_state_id": item.subject_state_id,
+            "verification_context_id": item.verification_context_id,
+            "policy_bundle_id": item.policy_bundle_id,
+            "passed": item.passed,
+        },
+    )
 
 
 def _observation(
     node_id: str,
     decision: ValidationDecision,
     reasons: tuple[str, ...] = (),
+    *,
+    binding: Any = None,
+    evidence_root: str | None = None,
 ) -> ValidationObservation:
-    return ValidationObservation(
-        node_id=node_id,
-        decision=decision,
-        evidence_root=_evidence_root(node_id, decision, reasons),
-    )
+    root = evidence_root
+    if not root:
+        root = policy_object_root(
+            f"validation:{node_id}",
+            {
+                "decision": decision,
+                "reasons": reasons,
+                "binding": binding,
+            },
+        )
+    return ValidationObservation(node_id=node_id, decision=decision, evidence_root=root)
 
 
 def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBundle | None:
@@ -197,15 +196,25 @@ def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBun
 def evaluate_composed_pipeline(
     pipeline_input: ComposedPipelineInput,
 ) -> ComposedPipelineResult:
-    """Evaluate the canonical pipeline using real gate outputs."""
+    """Evaluate the canonical pipeline and bind each stage to factual evidence."""
     observations: list[ValidationObservation] = []
 
     parsed = strict_parse_json(pipeline_input.raw_json, pipeline_input.schema)
+    parse_decision = (
+        ValidationDecision.ACCEPT
+        if parsed.decision is IdentityDecision.ALLOW
+        else ValidationDecision.BLOCK
+    )
     observations.append(
         _observation(
             "parse_schema",
-            ValidationDecision.ACCEPT if parsed.decision is IdentityDecision.ALLOW else ValidationDecision.BLOCK,
+            parse_decision,
             parsed.reasons,
+            binding={
+                "raw_json": pipeline_input.raw_json,
+                "schema": pipeline_input.schema,
+                "result": parsed,
+            },
         )
     )
 
@@ -214,11 +223,22 @@ def evaluate_composed_pipeline(
         pipeline_input.raw_id,
         pipeline_input.identity_policy,
     )
+    identity_decision = (
+        ValidationDecision.ACCEPT
+        if identity.decision is IdentityDecision.ALLOW
+        else ValidationDecision.BLOCK
+    )
     observations.append(
         _observation(
             "identity_namespace",
-            ValidationDecision.ACCEPT if identity.decision is IdentityDecision.ALLOW else ValidationDecision.BLOCK,
+            identity_decision,
             identity.reasons,
+            binding={
+                "namespace": pipeline_input.namespace,
+                "raw_id": pipeline_input.raw_id,
+                "policy": pipeline_input.identity_policy,
+                "result": identity,
+            },
         )
     )
 
@@ -228,7 +248,18 @@ def evaluate_composed_pipeline(
         ScopeDecision.REVIEW: ValidationDecision.NOT_DONE,
         ScopeDecision.BLOCK: ValidationDecision.BLOCK,
     }[scope.decision]
-    observations.append(_observation("scope_integrity", scope_decision, scope.reasons))
+    observations.append(
+        _observation(
+            "scope_integrity",
+            scope_decision,
+            scope.reasons,
+            binding={
+                "policy": pipeline_input.scope_policy,
+                "transitions": pipeline_input.transitions,
+                "result": scope,
+            },
+        )
+    )
 
     authority = evaluate_authority(
         pipeline_input.authority_context,
@@ -240,7 +271,19 @@ def evaluate_composed_pipeline(
         AuthorityDecision.STALE: ValidationDecision.STALE,
         AuthorityDecision.BLOCK: ValidationDecision.BLOCK,
     }[authority.decision]
-    observations.append(_observation("authority_capability", authority_decision, authority.reasons))
+    observations.append(
+        _observation(
+            "authority_capability",
+            authority_decision,
+            authority.reasons,
+            binding={
+                "context": pipeline_input.authority_context,
+                "capabilities": pipeline_input.capabilities,
+                "request": pipeline_input.authority_request,
+                "result": authority,
+            },
+        )
+    )
 
     trust = evaluate_trust(
         pipeline_input.trust_context,
@@ -252,11 +295,33 @@ def evaluate_composed_pipeline(
         TrustDecision.STALE: ValidationDecision.STALE,
         TrustDecision.BLOCK: ValidationDecision.BLOCK,
     }[trust.decision]
-    observations.append(_observation("trust_temporal", trust_decision, trust.reasons))
+    observations.append(
+        _observation(
+            "trust_temporal",
+            trust_decision,
+            trust.reasons,
+            binding={
+                "context": pipeline_input.trust_context,
+                "roots": pipeline_input.trust_roots,
+                "artifact": pipeline_input.signed_artifact,
+                "result": trust,
+            },
+        )
+    )
 
     presented_bundle = _presented_policy_bundle(pipeline_input)
     if pipeline_input.expected_policy_bundle is None or presented_bundle is None:
-        observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_missing",)))
+        observations.append(
+            _observation(
+                "policy_bundle",
+                ValidationDecision.NOT_DONE,
+                ("policy_bundle_missing",),
+                binding={
+                    "expected": pipeline_input.expected_policy_bundle,
+                    "presented": presented_bundle,
+                },
+            )
+        )
     else:
         bound_bundle_ids = (
             pipeline_input.acceptance_context.policy_bundle_id,
@@ -271,7 +336,11 @@ def evaluate_composed_pipeline(
             bound_policy_bundle_ids=bound_bundle_ids,
         )
         bundle_reasons = policy_bundle.reasons
-        bundle_decision = ValidationDecision.ACCEPT if policy_bundle.decision is PolicyBundleDecision.ALLOW else ValidationDecision.BLOCK
+        bundle_decision = (
+            ValidationDecision.ACCEPT
+            if policy_bundle.decision is PolicyBundleDecision.ALLOW
+            else ValidationDecision.BLOCK
+        )
         if policy_bundle.decision is PolicyBundleDecision.ALLOW:
             if pipeline_input.snapshot.policy_bundle_root != policy_bundle.policy_bundle_root:
                 bundle_decision = ValidationDecision.BLOCK
@@ -279,20 +348,64 @@ def evaluate_composed_pipeline(
             elif pipeline_input.commit_state.policy_bundle_root != policy_bundle.policy_bundle_root:
                 bundle_decision = ValidationDecision.BLOCK
                 bundle_reasons = ("current_policy_bundle_root_mismatch",)
-        observations.append(_observation("policy_bundle", bundle_decision, bundle_reasons))
+        observations.append(
+            _observation(
+                "policy_bundle",
+                bundle_decision,
+                bundle_reasons,
+                binding={
+                    "expected": pipeline_input.expected_policy_bundle,
+                    "presented": presented_bundle,
+                    "result": policy_bundle,
+                },
+                evidence_root=(
+                    policy_bundle.policy_bundle_root
+                    if bundle_decision is ValidationDecision.ACCEPT
+                    else None
+                ),
+            )
+        )
 
-    snapshot = evaluate_snapshot_freshness(pipeline_input.snapshot, pipeline_input.commit_state)
+    snapshot = evaluate_snapshot_freshness(
+        pipeline_input.snapshot,
+        pipeline_input.commit_state,
+    )
     snapshot_decision = {
         SnapshotDecision.ALLOW: ValidationDecision.ACCEPT,
         SnapshotDecision.STALE: ValidationDecision.STALE,
         SnapshotDecision.BLOCK: ValidationDecision.BLOCK,
     }[snapshot.decision]
-    observations.append(_observation("snapshot_freshness", snapshot_decision, snapshot.reasons))
+    observations.append(
+        _observation(
+            "snapshot_freshness",
+            snapshot_decision,
+            snapshot.reasons,
+            binding={
+                "snapshot": pipeline_input.snapshot,
+                "current": pipeline_input.commit_state,
+                "result": snapshot,
+            },
+        )
+    )
 
-    evidence_digests = {item.evidence_id: _evidence_payload_digest(item) for item in pipeline_input.evidence}
+    evidence_digests = {
+        item.evidence_id: _evidence_payload_digest(item)
+        for item in pipeline_input.evidence
+    }
 
     if pipeline_input.provenance_policy is None or pipeline_input.provenance_nodes is None:
-        observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_missing",)))
+        observations.append(
+            _observation(
+                "provenance",
+                ValidationDecision.NOT_DONE,
+                ("provenance_missing",),
+                binding={
+                    "policy": pipeline_input.provenance_policy,
+                    "nodes": pipeline_input.provenance_nodes,
+                    "evidence_digests": evidence_digests,
+                },
+            )
+        )
     else:
         provenance = evaluate_provenance(
             pipeline_input.provenance_policy,
@@ -305,14 +418,50 @@ def evaluate_composed_pipeline(
             required_evidence_digests=evidence_digests,
         )
         provenance_reasons = provenance.reasons
-        provenance_decision = ValidationDecision.ACCEPT if provenance.decision is ProvenanceDecision.ALLOW else ValidationDecision.BLOCK
-        if provenance.decision is ProvenanceDecision.ALLOW and pipeline_input.snapshot.evidence_root != provenance.provenance_root:
+        provenance_decision = (
+            ValidationDecision.ACCEPT
+            if provenance.decision is ProvenanceDecision.ALLOW
+            else ValidationDecision.BLOCK
+        )
+        if (
+            provenance.decision is ProvenanceDecision.ALLOW
+            and pipeline_input.snapshot.evidence_root != provenance.provenance_root
+        ):
             provenance_decision = ValidationDecision.BLOCK
             provenance_reasons = ("snapshot_provenance_root_mismatch",)
-        observations.append(_observation("provenance", provenance_decision, provenance_reasons))
+        observations.append(
+            _observation(
+                "provenance",
+                provenance_decision,
+                provenance_reasons,
+                binding={
+                    "policy": pipeline_input.provenance_policy,
+                    "nodes": pipeline_input.provenance_nodes,
+                    "result": provenance,
+                },
+                evidence_root=(
+                    provenance.provenance_root
+                    if provenance_decision is ValidationDecision.ACCEPT
+                    else None
+                ),
+            )
+        )
 
-    if pipeline_input.expected_obligation_manifest is None or pipeline_input.presented_obligation_manifest is None:
-        observations.append(_observation("obligation_integrity", ValidationDecision.NOT_DONE, ("obligation_manifest_missing",)))
+    if (
+        pipeline_input.expected_obligation_manifest is None
+        or pipeline_input.presented_obligation_manifest is None
+    ):
+        observations.append(
+            _observation(
+                "obligation_integrity",
+                ValidationDecision.NOT_DONE,
+                ("obligation_manifest_missing",),
+                binding={
+                    "expected": pipeline_input.expected_obligation_manifest,
+                    "presented": pipeline_input.presented_obligation_manifest,
+                },
+            )
+        )
     else:
         obligation = evaluate_obligation_manifest(
             pipeline_input.expected_obligation_manifest,
@@ -320,25 +469,73 @@ def evaluate_composed_pipeline(
             acceptance_required_obligations=pipeline_input.acceptance_context.required_obligations,
         )
         obligation_reasons = obligation.reasons
-        obligation_decision = ValidationDecision.ACCEPT if obligation.decision is ObligationDecision.ALLOW else ValidationDecision.BLOCK
-        if obligation.decision is ObligationDecision.ALLOW and pipeline_input.snapshot.obligation_root != obligation.obligation_root:
+        obligation_decision = (
+            ValidationDecision.ACCEPT
+            if obligation.decision is ObligationDecision.ALLOW
+            else ValidationDecision.BLOCK
+        )
+        if (
+            obligation.decision is ObligationDecision.ALLOW
+            and pipeline_input.snapshot.obligation_root != obligation.obligation_root
+        ):
             obligation_decision = ValidationDecision.BLOCK
             obligation_reasons = ("snapshot_obligation_root_mismatch",)
-        observations.append(_observation("obligation_integrity", obligation_decision, obligation_reasons))
+        observations.append(
+            _observation(
+                "obligation_integrity",
+                obligation_decision,
+                obligation_reasons,
+                binding={
+                    "expected": pipeline_input.expected_obligation_manifest,
+                    "presented": pipeline_input.presented_obligation_manifest,
+                    "result": obligation,
+                },
+                evidence_root=(
+                    obligation.obligation_root
+                    if obligation_decision is ValidationDecision.ACCEPT
+                    else None
+                ),
+            )
+        )
 
-    acceptance = evaluate_acceptance(pipeline_input.acceptance_context, pipeline_input.evidence)
+    acceptance = evaluate_acceptance(
+        pipeline_input.acceptance_context,
+        pipeline_input.evidence,
+    )
     acceptance_decision = {
         AcceptanceDecision.ACCEPT: ValidationDecision.ACCEPT,
         AcceptanceDecision.NOT_DONE: ValidationDecision.NOT_DONE,
         AcceptanceDecision.BLOCK: ValidationDecision.BLOCK,
     }[acceptance.decision]
-    observations.append(_observation("evidence_qualification", acceptance_decision, acceptance.reasons))
+    observations.append(
+        _observation(
+            "evidence_qualification",
+            acceptance_decision,
+            acceptance.reasons,
+            binding={
+                "context": pipeline_input.acceptance_context,
+                "evidence": pipeline_input.evidence,
+                "result": acceptance,
+            },
+        )
+    )
 
     if pipeline_input.aggregation_policy is None:
-        observations.append(_observation("aggregation", ValidationDecision.NOT_DONE, ("aggregation_policy_missing",)))
+        observations.append(
+            _observation(
+                "aggregation",
+                ValidationDecision.NOT_DONE,
+                ("aggregation_policy_missing",),
+                binding={"evidence_digests": evidence_digests},
+            )
+        )
     else:
         current_pair_id = pipeline_input.retry_domain.pair_id
-        current_run_id = pipeline_input.retry_events[-1].run_id if pipeline_input.retry_events else ""
+        current_run_id = (
+            pipeline_input.retry_events[-1].run_id
+            if pipeline_input.retry_events
+            else ""
+        )
         aggregation_items = tuple(
             AggregationItem(
                 evidence_id=item.evidence_id,
@@ -353,22 +550,66 @@ def evaluate_composed_pipeline(
             )
             for item in pipeline_input.evidence
         )
-        aggregation = evaluate_aggregation(pipeline_input.aggregation_policy, aggregation_items)
+        aggregation = evaluate_aggregation(
+            pipeline_input.aggregation_policy,
+            aggregation_items,
+        )
         aggregation_decision = {
             AggregationDecision.ALLOW: ValidationDecision.ACCEPT,
             AggregationDecision.NOT_DONE: ValidationDecision.NOT_DONE,
             AggregationDecision.BLOCK: ValidationDecision.BLOCK,
         }[aggregation.decision]
-        observations.append(_observation("aggregation", aggregation_decision, aggregation.reasons))
+        observations.append(
+            _observation(
+                "aggregation",
+                aggregation_decision,
+                aggregation.reasons,
+                binding={
+                    "policy": pipeline_input.aggregation_policy,
+                    "items": aggregation_items,
+                    "result": aggregation,
+                },
+                evidence_root=aggregation.aggregation_root,
+            )
+        )
 
-    retry = evaluate_retry_domain(pipeline_input.retry_policy, pipeline_input.retry_domain, pipeline_input.retry_events)
-    observations.append(_observation("retry_recovery", ValidationDecision.ACCEPT if retry.decision is RetryDecision.ALLOW else ValidationDecision.BLOCK, retry.reasons))
+    retry = evaluate_retry_domain(
+        pipeline_input.retry_policy,
+        pipeline_input.retry_domain,
+        pipeline_input.retry_events,
+    )
+    retry_decision = (
+        ValidationDecision.ACCEPT
+        if retry.decision is RetryDecision.ALLOW
+        else ValidationDecision.BLOCK
+    )
+    observations.append(
+        _observation(
+            "retry_recovery",
+            retry_decision,
+            retry.reasons,
+            binding={
+                "policy": pipeline_input.retry_policy,
+                "domain": pipeline_input.retry_domain,
+                "events": pipeline_input.retry_events,
+                "result": retry,
+            },
+        )
+    )
 
     if pipeline_input.termination_policy_id is None:
-        observations.append(_observation("terminal_barrier", ValidationDecision.NOT_DONE, ("termination_policy_missing",)))
+        observations.append(
+            _observation(
+                "terminal_barrier",
+                ValidationDecision.NOT_DONE,
+                ("termination_policy_missing",),
+                binding={"action": pipeline_input.terminal_action},
+            )
+        )
     else:
+        terminal_policy = canonical_terminal_policy(pipeline_input.termination_policy_id)
         terminal = evaluate_terminal_barrier(
-            canonical_terminal_policy(pipeline_input.termination_policy_id),
+            terminal_policy,
             tuple(observations),
             requested_action=pipeline_input.terminal_action,
         )
@@ -378,7 +619,20 @@ def evaluate_composed_pipeline(
             TerminalDecision.STALE: ValidationDecision.STALE,
             TerminalDecision.BLOCK: ValidationDecision.BLOCK,
         }[terminal.decision]
-        observations.append(_observation("terminal_barrier", terminal_decision, terminal.reasons))
+        observations.append(
+            _observation(
+                "terminal_barrier",
+                terminal_decision,
+                terminal.reasons,
+                binding={
+                    "policy": terminal_policy,
+                    "action": pipeline_input.terminal_action,
+                    "prerequisites": tuple(observations),
+                    "result": terminal,
+                },
+                evidence_root=terminal.terminal_barrier_root,
+            )
+        )
 
     commit = evaluate_commit(
         pipeline_input.snapshot,
@@ -392,9 +646,32 @@ def evaluate_composed_pipeline(
         CommitDecision.CONFLICT: ValidationDecision.BLOCK,
         CommitDecision.BLOCK: ValidationDecision.BLOCK,
     }[commit.decision]
-    observations.append(_observation("commit_authorization", commit_decision, commit.reasons))
+    observations.append(
+        _observation(
+            "commit_authorization",
+            commit_decision,
+            commit.reasons,
+            binding={
+                "snapshot": pipeline_input.snapshot,
+                "token": pipeline_input.commit_token,
+                "current": pipeline_input.commit_state,
+                "terminal_commit_id": pipeline_input.terminal_commit_id,
+                "result": commit,
+            },
+        )
+    )
 
-    observations.append(_observation("atomic_commit", ValidationDecision.NOT_DONE, ("atomic_commit_not_implemented",)))
+    observations.append(
+        _observation(
+            "atomic_commit",
+            ValidationDecision.NOT_DONE,
+            ("atomic_commit_not_implemented",),
+            binding={
+                "acceptance_snapshot_id": pipeline_input.snapshot.acceptance_snapshot_id,
+                "terminal_commit_id": pipeline_input.terminal_commit_id,
+            },
+        )
+    )
 
     result = evaluate_validation_graph(canonical_validation_graph(), observations)
     return ComposedPipelineResult(result=result, observations=tuple(observations))
