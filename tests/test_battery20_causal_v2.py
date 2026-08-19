@@ -14,3 +14,5 @@ def test_08_future_trust_epoch_is_blocked():
     c,r,a=_trust(2,2); c=TrustContext("ctx-v2",1,2,2,2,TemporalHighWater(1,2,2,2)); assert evaluate_trust(c,r,a).decision is TrustDecision.BLOCK
 def test_09_expired_artifact_is_stale():
     root=TrustRoot("root",1,TrustRootStatus.ACTIVE,activated_epoch=0); a=SignedArtifact("a","root",1,1,1,1,1,2); c=TrustContext("ctx",1,1,3,1,TemporalHighWater(1,1,3,1)); assert evaluate_trust(c,(root,),a).decision is TrustDecision.STALE
+def test_10_unrelated_cyclic_roots_do_not_block_selected_root():
+    roots=(TrustRoot("root",2,TrustRootStatus.ACTIVE,activated_epoch=0),TrustRoot("x",1,TrustRootStatus.ACTIVE,parent_root_id="y",activated_epoch=0),TrustRoot("y",2,TrustRootStatus.ACTIVE,parent_root_id="x",activated_epoch=0)); a=SignedArtifact("a","root",2,2,2,2,2,9); c=TrustContext("ctx",2,2,2,2,TemporalHighWater(2,2,2,2)); assert evaluate_trust(c,roots,a).decision is TrustDecision.ALLOW
