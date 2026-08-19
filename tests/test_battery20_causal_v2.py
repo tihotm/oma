@@ -19,3 +19,4 @@ def test_10_unrelated_cyclic_roots_do_not_block_selected_root():
 
 def _id_policy(): return IdentityPolicy("id-v2")
 def test_11_identity_leading_whitespace_is_blocked(): assert make_typed_identity(" repo","x",_id_policy()).decision is IdentityDecision.BLOCK
+def test_12_identity_control_character_is_blocked(): assert make_typed_identity("repo\u200b","x",_id_policy()).decision is IdentityDecision.BLOCK
