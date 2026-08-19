@@ -5,6 +5,7 @@ import runpy
 from oma.obligation import obligation_root
 from oma.pipeline import evaluate_composed_pipeline
 from oma.policy import PolicyBinding, PolicyBundle, policy_bundle_root, policy_object_root
+from oma.terminal import canonical_terminal_policy
 from oma.validation import ValidationDecision
 
 
@@ -19,6 +20,7 @@ def policy_enabled_input():
     item = valid_input()
     aggregation_policy = valid_aggregation_policy(item)
     termination_policy_id = "termination:v1"
+    termination_policy = canonical_terminal_policy(termination_policy_id)
     bindings = (
         PolicyBinding(
             "serialization",
@@ -67,8 +69,8 @@ def policy_enabled_input():
         ),
         PolicyBinding(
             "termination",
-            termination_policy_id,
-            policy_object_root("termination", termination_policy_id),
+            termination_policy.termination_policy_id,
+            policy_object_root("termination", termination_policy),
         ),
     )
     bundle = PolicyBundle(
