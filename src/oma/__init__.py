@@ -100,6 +100,8 @@ from .sqlite_commit import (
     DurableCommitResult,
     DurableTerminalRecord,
     SQLiteTerminalStore,
+    SubjectStateDecision,
+    SubjectStateResult,
 )
 from .terminal import (
     TerminalDecision,
@@ -144,7 +146,7 @@ __all__ = [
     "RetryDecision", "RetryDomain", "RetryEvent", "RetryEventKind", "RetryPolicy", "RetryResult", "evaluate_retry_domain",
     "FileTransition", "ScopeDecision", "ScopePolicy", "ScopeResult", "evaluate_scope",
     "SnapshotDecision", "SnapshotResult", "evaluate_snapshot_freshness",
-    "DurableCommitDecision", "DurableCommitResult", "DurableTerminalRecord", "SQLiteTerminalStore",
+    "DurableCommitDecision", "DurableCommitResult", "DurableTerminalRecord", "SQLiteTerminalStore", "SubjectStateDecision", "SubjectStateResult",
     "TerminalDecision", "TerminalPolicy", "TerminalResult", "canonical_terminal_policy", "evaluate_terminal_barrier",
     "SignedArtifact", "TemporalHighWater", "TrustContext", "TrustDecision", "TrustResult", "TrustRoot", "TrustRootStatus", "evaluate_trust",
     "ValidationDecision", "ValidationGraph", "ValidationNode", "ValidationObservation", "ValidationResult", "canonical_validation_graph", "evaluate_validation_graph", "required_closure",
