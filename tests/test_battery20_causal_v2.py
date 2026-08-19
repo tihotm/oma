@@ -1,4 +1,5 @@
 from oma.scope import FileTransition, ScopeDecision, ScopePolicy, evaluate_scope
+from oma.trust import SignedArtifact, TemporalHighWater, TrustContext, TrustDecision, TrustRoot, TrustRootStatus, evaluate_trust
 
 
 def _scope_policy():
@@ -23,3 +24,15 @@ def test_04_forbidden_touch_restore_can_be_hidden_as_untouched():
 
 def test_05_path_traversal_is_blocked():
     assert evaluate_scope(_scope_policy(), (FileTransition("src/../secret.txt", "a", "b"),)).decision is ScopeDecision.BLOCK
+
+
+def _trust(epoch=2, high=2):
+    ctx = TrustContext("ctx-v2", epoch, epoch, epoch, epoch, TemporalHighWater(high, high, high, high))
+    roots = (TrustRoot("root", epoch, TrustRootStatus.ACTIVE, activated_epoch=0),)
+    artifact = SignedArtifact("artifact", "root", epoch, epoch, epoch, epoch, epoch, epoch + 10)
+    return ctx, roots, artifact
+
+
+def test_06_temporal_high_water_rollback_is_blocked():
+    ctx, roots, artifact = _trust(epoch=1, high=2)
+    assert evaluate_trust(ctx, roots, artifact).decision is TrustDecision.BLOCK
