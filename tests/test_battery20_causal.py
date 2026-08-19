@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+from oma.identity import IdentityDecision, IdentityPolicy, identity_digest, make_typed_identity
 from oma.trust import (
     SignedArtifact,
     TemporalHighWater,
@@ -78,6 +79,13 @@ def test_05_temporal_high_water_is_not_durable_registry_state(tmp_path):
     artifact = _artifact()
     assert registry.register(_ctx(), _roots(), artifact).decision is TrustRegistryDecision.WRITTEN
     reopened = SQLiteTrustArtifactRegistry(path)
-    # Probe: reopening retains the artifact but there is no persisted temporal
-    # high-water state to distinguish a later historical epoch from this old one.
     assert reopened.get(_ctx(), _roots(), artifact.artifact_id) == artifact
+
+
+def test_06_case_aliases_collapse_to_one_identity():
+    policy = IdentityPolicy("id-policy")
+    a = make_typed_identity("Subject", "Straße", policy)
+    b = make_typed_identity("subject", "STRASSE", policy)
+    assert a.decision is IdentityDecision.ALLOW
+    assert b.decision is IdentityDecision.ALLOW
+    assert a.identity == b.identity
