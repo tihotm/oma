@@ -5,6 +5,7 @@ import hashlib
 from typing import Any
 
 from .acceptance import AcceptanceDecision, evaluate_acceptance
+from .aggregation import AggregationDecision, AggregationItem, evaluate_aggregation
 from .authority import AuthorityDecision, evaluate_authority
 from .commit import CommitDecision, evaluate_commit
 from .identity import IdentityDecision, make_typed_identity, strict_parse_json
@@ -50,6 +51,7 @@ class ComposedPipelineInput:
     presented_obligation_manifest: Any | None = None
     provenance_policy: Any | None = None
     provenance_nodes: tuple[Any, ...] | None = None
+    aggregation_policy: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,13 +164,14 @@ def evaluate_composed_pipeline(
     observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_not_implemented",)))
     observations.append(_observation("snapshot_freshness", ValidationDecision.NOT_DONE, ("snapshot_freshness_not_implemented",)))
 
+    evidence_digests = {
+        item.evidence_id: _evidence_payload_digest(item)
+        for item in pipeline_input.evidence
+    }
+
     if pipeline_input.provenance_policy is None or pipeline_input.provenance_nodes is None:
         observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_missing",)))
     else:
-        evidence_digests = {
-            item.evidence_id: _evidence_payload_digest(item)
-            for item in pipeline_input.evidence
-        }
         provenance = evaluate_provenance(
             pipeline_input.provenance_policy,
             pipeline_input.provenance_nodes,
@@ -223,7 +226,32 @@ def evaluate_composed_pipeline(
     }[acceptance.decision]
     observations.append(_observation("evidence_qualification", acceptance_decision, acceptance.reasons))
 
-    observations.append(_observation("aggregation", ValidationDecision.NOT_DONE, ("aggregation_not_implemented",)))
+    if pipeline_input.aggregation_policy is None:
+        observations.append(_observation("aggregation", ValidationDecision.NOT_DONE, ("aggregation_policy_missing",)))
+    else:
+        current_pair_id = pipeline_input.retry_domain.pair_id
+        current_run_id = pipeline_input.retry_events[-1].run_id if pipeline_input.retry_events else ""
+        aggregation_items = tuple(
+            AggregationItem(
+                evidence_id=item.evidence_id,
+                payload_digest=evidence_digests[item.evidence_id],
+                subject_id=item.subject_id,
+                subject_state_id=item.subject_state_id,
+                verification_context_id=item.verification_context_id,
+                policy_bundle_id=item.policy_bundle_id,
+                pair_id=current_pair_id,
+                run_id=current_run_id,
+                passed=item.passed,
+            )
+            for item in pipeline_input.evidence
+        )
+        aggregation = evaluate_aggregation(pipeline_input.aggregation_policy, aggregation_items)
+        aggregation_decision = {
+            AggregationDecision.ALLOW: ValidationDecision.ACCEPT,
+            AggregationDecision.NOT_DONE: ValidationDecision.NOT_DONE,
+            AggregationDecision.BLOCK: ValidationDecision.BLOCK,
+        }[aggregation.decision]
+        observations.append(_observation("aggregation", aggregation_decision, aggregation.reasons))
 
     retry = evaluate_retry_domain(pipeline_input.retry_policy, pipeline_input.retry_domain, pipeline_input.retry_events)
     observations.append(
