@@ -5,6 +5,14 @@ from .acceptance import (
     Evidence,
     evaluate_acceptance,
 )
+from .authority import (
+    AuthorityContext,
+    AuthorityDecision,
+    AuthorityRequest,
+    AuthorityResult,
+    Capability,
+    evaluate_authority,
+)
 from .commit import (
     AcceptanceSnapshot,
     CommitDecision,
@@ -42,6 +50,12 @@ __all__ = [
     "AcceptanceResult",
     "Evidence",
     "evaluate_acceptance",
+    "AuthorityContext",
+    "AuthorityDecision",
+    "AuthorityRequest",
+    "AuthorityResult",
+    "Capability",
+    "evaluate_authority",
     "AcceptanceSnapshot",
     "CommitDecision",
     "CommitResult",
