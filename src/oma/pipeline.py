@@ -20,6 +20,7 @@ from .policy import (
 from .provenance import ProvenanceDecision, evaluate_provenance
 from .retry import RetryDecision, evaluate_retry_domain
 from .scope import ScopeDecision, evaluate_scope
+from .snapshot import SnapshotDecision, evaluate_snapshot_freshness
 from .terminal import TerminalDecision, canonical_terminal_policy, evaluate_terminal_barrier
 from .trust import TrustDecision, evaluate_trust
 from .validation import (
@@ -196,12 +197,7 @@ def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBun
 def evaluate_composed_pipeline(
     pipeline_input: ComposedPipelineInput,
 ) -> ComposedPipelineResult:
-    """Evaluate the canonical pipeline using real gate outputs.
-
-    Callers provide domain inputs, not precomputed validation decisions.
-    Acceptance-critical stages without a production implementation remain
-    NOT_DONE so the composed pipeline cannot manufacture global ACCEPT.
-    """
+    """Evaluate the canonical pipeline using real gate outputs."""
     observations: list[ValidationObservation] = []
 
     parsed = strict_parse_json(pipeline_input.raw_json, pipeline_input.schema)
@@ -260,13 +256,7 @@ def evaluate_composed_pipeline(
 
     presented_bundle = _presented_policy_bundle(pipeline_input)
     if pipeline_input.expected_policy_bundle is None or presented_bundle is None:
-        observations.append(
-            _observation(
-                "policy_bundle",
-                ValidationDecision.NOT_DONE,
-                ("policy_bundle_missing",),
-            )
-        )
+        observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_missing",)))
     else:
         bound_bundle_ids = (
             pipeline_input.acceptance_context.policy_bundle_id,
@@ -281,11 +271,7 @@ def evaluate_composed_pipeline(
             bound_policy_bundle_ids=bound_bundle_ids,
         )
         bundle_reasons = policy_bundle.reasons
-        bundle_decision = (
-            ValidationDecision.ACCEPT
-            if policy_bundle.decision is PolicyBundleDecision.ALLOW
-            else ValidationDecision.BLOCK
-        )
+        bundle_decision = ValidationDecision.ACCEPT if policy_bundle.decision is PolicyBundleDecision.ALLOW else ValidationDecision.BLOCK
         if policy_bundle.decision is PolicyBundleDecision.ALLOW:
             if pipeline_input.snapshot.policy_bundle_root != policy_bundle.policy_bundle_root:
                 bundle_decision = ValidationDecision.BLOCK
@@ -295,12 +281,15 @@ def evaluate_composed_pipeline(
                 bundle_reasons = ("current_policy_bundle_root_mismatch",)
         observations.append(_observation("policy_bundle", bundle_decision, bundle_reasons))
 
-    observations.append(_observation("snapshot_freshness", ValidationDecision.NOT_DONE, ("snapshot_freshness_not_implemented",)))
+    snapshot = evaluate_snapshot_freshness(pipeline_input.snapshot, pipeline_input.commit_state)
+    snapshot_decision = {
+        SnapshotDecision.ALLOW: ValidationDecision.ACCEPT,
+        SnapshotDecision.STALE: ValidationDecision.STALE,
+        SnapshotDecision.BLOCK: ValidationDecision.BLOCK,
+    }[snapshot.decision]
+    observations.append(_observation("snapshot_freshness", snapshot_decision, snapshot.reasons))
 
-    evidence_digests = {
-        item.evidence_id: _evidence_payload_digest(item)
-        for item in pipeline_input.evidence
-    }
+    evidence_digests = {item.evidence_id: _evidence_payload_digest(item) for item in pipeline_input.evidence}
 
     if pipeline_input.provenance_policy is None or pipeline_input.provenance_nodes is None:
         observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_missing",)))
@@ -316,15 +305,8 @@ def evaluate_composed_pipeline(
             required_evidence_digests=evidence_digests,
         )
         provenance_reasons = provenance.reasons
-        provenance_decision = (
-            ValidationDecision.ACCEPT
-            if provenance.decision is ProvenanceDecision.ALLOW
-            else ValidationDecision.BLOCK
-        )
-        if (
-            provenance.decision is ProvenanceDecision.ALLOW
-            and pipeline_input.snapshot.evidence_root != provenance.provenance_root
-        ):
+        provenance_decision = ValidationDecision.ACCEPT if provenance.decision is ProvenanceDecision.ALLOW else ValidationDecision.BLOCK
+        if provenance.decision is ProvenanceDecision.ALLOW and pipeline_input.snapshot.evidence_root != provenance.provenance_root:
             provenance_decision = ValidationDecision.BLOCK
             provenance_reasons = ("snapshot_provenance_root_mismatch",)
         observations.append(_observation("provenance", provenance_decision, provenance_reasons))
@@ -338,15 +320,8 @@ def evaluate_composed_pipeline(
             acceptance_required_obligations=pipeline_input.acceptance_context.required_obligations,
         )
         obligation_reasons = obligation.reasons
-        obligation_decision = (
-            ValidationDecision.ACCEPT
-            if obligation.decision is ObligationDecision.ALLOW
-            else ValidationDecision.BLOCK
-        )
-        if (
-            obligation.decision is ObligationDecision.ALLOW
-            and pipeline_input.snapshot.obligation_root != obligation.obligation_root
-        ):
+        obligation_decision = ValidationDecision.ACCEPT if obligation.decision is ObligationDecision.ALLOW else ValidationDecision.BLOCK
+        if obligation.decision is ObligationDecision.ALLOW and pipeline_input.snapshot.obligation_root != obligation.obligation_root:
             obligation_decision = ValidationDecision.BLOCK
             obligation_reasons = ("snapshot_obligation_root_mismatch",)
         observations.append(_observation("obligation_integrity", obligation_decision, obligation_reasons))
@@ -387,13 +362,7 @@ def evaluate_composed_pipeline(
         observations.append(_observation("aggregation", aggregation_decision, aggregation.reasons))
 
     retry = evaluate_retry_domain(pipeline_input.retry_policy, pipeline_input.retry_domain, pipeline_input.retry_events)
-    observations.append(
-        _observation(
-            "retry_recovery",
-            ValidationDecision.ACCEPT if retry.decision is RetryDecision.ALLOW else ValidationDecision.BLOCK,
-            retry.reasons,
-        )
-    )
+    observations.append(_observation("retry_recovery", ValidationDecision.ACCEPT if retry.decision is RetryDecision.ALLOW else ValidationDecision.BLOCK, retry.reasons))
 
     if pipeline_input.termination_policy_id is None:
         observations.append(_observation("terminal_barrier", ValidationDecision.NOT_DONE, ("termination_policy_missing",)))
