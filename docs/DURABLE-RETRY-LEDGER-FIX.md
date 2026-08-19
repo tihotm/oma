@@ -21,4 +21,10 @@ The caller-supplied `retry_events` tuple is therefore no longer the final source
 
 If SQLite contains attempts 1, 2 and 3 under a policy with `max_execution_attempts=2`, a caller presenting only attempt 1 must still receive `retry_recovery=BLOCK`, global `BLOCK`, and zero terminal rows.
 
-This PR is used to run the whole repository suite against the fix.
+## First CI confrontation
+
+The first fix run produced 415 PASS / 1 FAIL. The sole failure was an intentionally valid independent protection: a test changed the authoritative latest run from `run-1` to `run-2` while leaving aggregation/evidence bound to `run-1`, so aggregation correctly blocked.
+
+The fixture was corrected to use a same-run retry when testing only source-of-truth replacement. No production protection was relaxed.
+
+This PR is rerun against that corrected separation of concerns.
