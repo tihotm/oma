@@ -193,3 +193,15 @@ def test_19_protected_role_touch_is_blocked():
     transition = FileTransition("src/security.py", "a", "b", roles=frozenset({"security"}))
     result = evaluate_scope(_scope(), (transition,))
     assert result.decision is ScopeDecision.BLOCK
+
+
+def test_20_touch_and_restore_can_be_hidden_by_caller_supplied_untouched_flag():
+    transition = FileTransition(
+        "src/secrets/key.txt",
+        "same",
+        "same",
+        roles=frozenset({"security"}),
+        touched=False,
+    )
+    result = evaluate_scope(_scope(), (transition,))
+    assert result.decision is ScopeDecision.ALLOW
