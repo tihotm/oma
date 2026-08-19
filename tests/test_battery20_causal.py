@@ -182,3 +182,8 @@ def test_16_scope_path_traversal_is_blocked():
 def test_17_changed_digest_with_untouched_claim_is_blocked():
     result = evaluate_scope(_scope(), (FileTransition("src/app.py", "a", "b", touched=False),))
     assert result.decision is ScopeDecision.BLOCK
+
+
+def test_18_forbidden_path_is_blocked():
+    result = evaluate_scope(_scope(), (FileTransition("src/secrets/key.txt", "a", "b"),))
+    assert result.decision is ScopeDecision.BLOCK
