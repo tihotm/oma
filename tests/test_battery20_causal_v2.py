@@ -18,3 +18,11 @@ def test_01_changed_transition_cannot_claim_untouched():
     )
     assert result.decision is ScopeDecision.BLOCK
     assert any("transition_history_inconsistent" in reason for reason in result.reasons)
+
+
+def test_02_hidden_touch_restore_is_accepted_when_caller_sets_untouched():
+    result = evaluate_scope(
+        _scope_policy(),
+        (FileTransition("src/a.py", "same", "same", roles=frozenset({"protected"}), touched=False),),
+    )
+    assert result.decision is ScopeDecision.ALLOW
