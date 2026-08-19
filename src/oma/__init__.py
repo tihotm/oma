@@ -67,6 +67,15 @@ from .pipeline import (
     ComposedPipelineResult,
     evaluate_composed_pipeline,
 )
+from .policy import (
+    PolicyBinding,
+    PolicyBundle,
+    PolicyBundleDecision,
+    PolicyBundleResult,
+    evaluate_policy_bundle,
+    policy_bundle_root,
+    policy_object_root,
+)
 from .provenance import (
     ProvenanceDecision,
     ProvenanceNode,
@@ -159,6 +168,13 @@ __all__ = [
     "ComposedPipelineInput",
     "ComposedPipelineResult",
     "evaluate_composed_pipeline",
+    "PolicyBinding",
+    "PolicyBundle",
+    "PolicyBundleDecision",
+    "PolicyBundleResult",
+    "evaluate_policy_bundle",
+    "policy_bundle_root",
+    "policy_object_root",
     "ProvenanceDecision",
     "ProvenanceNode",
     "ProvenancePolicy",
