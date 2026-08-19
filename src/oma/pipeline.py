@@ -9,7 +9,14 @@ from .aggregation import AggregationDecision, AggregationItem, evaluate_aggregat
 from .authority import AuthorityDecision, evaluate_authority
 from .commit import CommitDecision, evaluate_commit
 from .identity import IdentityDecision, make_typed_identity, strict_parse_json
-from .obligation import ObligationDecision, evaluate_obligation_manifest
+from .obligation import ObligationDecision, evaluate_obligation_manifest, obligation_root
+from .policy import (
+    PolicyBinding,
+    PolicyBundle,
+    PolicyBundleDecision,
+    evaluate_policy_bundle,
+    policy_object_root,
+)
 from .provenance import ProvenanceDecision, evaluate_provenance
 from .retry import RetryDecision, evaluate_retry_domain
 from .scope import ScopeDecision, evaluate_scope
@@ -20,6 +27,22 @@ from .validation import (
     ValidationResult,
     canonical_validation_graph,
     evaluate_validation_graph,
+)
+
+
+_REQUIRED_POLICY_KINDS = frozenset(
+    {
+        "serialization",
+        "identity",
+        "scope",
+        "authority",
+        "trust",
+        "obligation",
+        "provenance",
+        "aggregation",
+        "retry",
+        "termination",
+    }
 )
 
 
@@ -52,6 +75,8 @@ class ComposedPipelineInput:
     provenance_policy: Any | None = None
     provenance_nodes: tuple[Any, ...] | None = None
     aggregation_policy: Any | None = None
+    expected_policy_bundle: Any | None = None
+    termination_policy_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +118,75 @@ def _observation(
         node_id=node_id,
         decision=decision,
         evidence_root=_evidence_root(node_id, decision, reasons),
+    )
+
+
+def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBundle | None:
+    if (
+        pipeline_input.expected_policy_bundle is None
+        or pipeline_input.termination_policy_id is None
+        or pipeline_input.presented_obligation_manifest is None
+        or pipeline_input.provenance_policy is None
+        or pipeline_input.aggregation_policy is None
+    ):
+        return None
+
+    bindings = (
+        PolicyBinding(
+            "serialization",
+            pipeline_input.schema.schema_id,
+            policy_object_root("serialization", pipeline_input.schema),
+        ),
+        PolicyBinding(
+            "identity",
+            pipeline_input.identity_policy.identity_policy_id,
+            policy_object_root("identity", pipeline_input.identity_policy),
+        ),
+        PolicyBinding(
+            "scope",
+            pipeline_input.scope_policy.scope_policy_id,
+            policy_object_root("scope", pipeline_input.scope_policy),
+        ),
+        PolicyBinding(
+            "authority",
+            pipeline_input.authority_context.authority_context_id,
+            policy_object_root("authority", pipeline_input.authority_context),
+        ),
+        PolicyBinding(
+            "trust",
+            pipeline_input.trust_context.temporal_context_id,
+            policy_object_root("trust", pipeline_input.trust_roots),
+        ),
+        PolicyBinding(
+            "obligation",
+            pipeline_input.presented_obligation_manifest.obligation_set_id,
+            obligation_root(pipeline_input.presented_obligation_manifest),
+        ),
+        PolicyBinding(
+            "provenance",
+            pipeline_input.provenance_policy.provenance_policy_id,
+            policy_object_root("provenance", pipeline_input.provenance_policy),
+        ),
+        PolicyBinding(
+            "aggregation",
+            pipeline_input.aggregation_policy.aggregation_policy_id,
+            policy_object_root("aggregation", pipeline_input.aggregation_policy),
+        ),
+        PolicyBinding(
+            "retry",
+            pipeline_input.retry_policy.retry_policy_id,
+            policy_object_root("retry", pipeline_input.retry_policy),
+        ),
+        PolicyBinding(
+            "termination",
+            pipeline_input.termination_policy_id,
+            policy_object_root("termination", pipeline_input.termination_policy_id),
+        ),
+    )
+    return PolicyBundle(
+        policy_bundle_id=pipeline_input.expected_policy_bundle.policy_bundle_id,
+        bundle_epoch=pipeline_input.expected_policy_bundle.bundle_epoch,
+        bindings=bindings,
     )
 
 
@@ -161,7 +255,43 @@ def evaluate_composed_pipeline(
     }[trust.decision]
     observations.append(_observation("trust_temporal", trust_decision, trust.reasons))
 
-    observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_not_implemented",)))
+    presented_bundle = _presented_policy_bundle(pipeline_input)
+    if pipeline_input.expected_policy_bundle is None or presented_bundle is None:
+        observations.append(
+            _observation(
+                "policy_bundle",
+                ValidationDecision.NOT_DONE,
+                ("policy_bundle_missing",),
+            )
+        )
+    else:
+        bound_bundle_ids = (
+            pipeline_input.acceptance_context.policy_bundle_id,
+            pipeline_input.snapshot.policy_bundle_id,
+            pipeline_input.commit_state.policy_bundle_id,
+            *(item.policy_bundle_id for item in pipeline_input.evidence),
+        )
+        policy_bundle = evaluate_policy_bundle(
+            pipeline_input.expected_policy_bundle,
+            presented_bundle,
+            required_policy_kinds=_REQUIRED_POLICY_KINDS,
+            bound_policy_bundle_ids=bound_bundle_ids,
+        )
+        bundle_reasons = policy_bundle.reasons
+        bundle_decision = (
+            ValidationDecision.ACCEPT
+            if policy_bundle.decision is PolicyBundleDecision.ALLOW
+            else ValidationDecision.BLOCK
+        )
+        if policy_bundle.decision is PolicyBundleDecision.ALLOW:
+            if pipeline_input.snapshot.policy_bundle_root != policy_bundle.policy_bundle_root:
+                bundle_decision = ValidationDecision.BLOCK
+                bundle_reasons = ("snapshot_policy_bundle_root_mismatch",)
+            elif pipeline_input.commit_state.policy_bundle_root != policy_bundle.policy_bundle_root:
+                bundle_decision = ValidationDecision.BLOCK
+                bundle_reasons = ("current_policy_bundle_root_mismatch",)
+        observations.append(_observation("policy_bundle", bundle_decision, bundle_reasons))
+
     observations.append(_observation("snapshot_freshness", ValidationDecision.NOT_DONE, ("snapshot_freshness_not_implemented",)))
 
     evidence_digests = {
