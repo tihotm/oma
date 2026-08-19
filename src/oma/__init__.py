@@ -41,6 +41,7 @@ from .durability import (
     recover_transaction,
     validate_transaction,
 )
+from .execution import execute_composed_pipeline
 from .identity import (
     IdentityDecision,
     IdentityPolicy,
@@ -94,6 +95,12 @@ from .retry import (
 )
 from .scope import FileTransition, ScopeDecision, ScopePolicy, ScopeResult, evaluate_scope
 from .snapshot import SnapshotDecision, SnapshotResult, evaluate_snapshot_freshness
+from .sqlite_commit import (
+    DurableCommitDecision,
+    DurableCommitResult,
+    DurableTerminalRecord,
+    SQLiteTerminalStore,
+)
 from .terminal import (
     TerminalDecision,
     TerminalPolicy,
@@ -128,6 +135,7 @@ __all__ = [
     "AuthorityContext", "AuthorityDecision", "AuthorityRequest", "AuthorityResult", "Capability", "evaluate_authority",
     "AcceptanceSnapshot", "CommitDecision", "CommitResult", "CommitState", "CommitToken", "CommitTransition", "commit_if_current", "evaluate_commit",
     "RecoveryDecision", "RecoveryResult", "TerminalTransaction", "TransactionPhase", "advance_transaction", "observable_effect_ids", "recover_transaction", "validate_transaction",
+    "execute_composed_pipeline",
     "IdentityDecision", "IdentityPolicy", "IdentityResult", "ParseResult", "StrictSchema", "TypedIdentity", "canonicalize_identifier", "content_digest", "identity_digest", "make_typed_identity", "strict_parse_json",
     "ObligationDecision", "ObligationManifest", "ObligationResult", "ObligationSpec", "evaluate_obligation_manifest", "obligation_root",
     "ComposedPipelineInput", "ComposedPipelineResult", "evaluate_composed_pipeline",
@@ -136,6 +144,7 @@ __all__ = [
     "RetryDecision", "RetryDomain", "RetryEvent", "RetryEventKind", "RetryPolicy", "RetryResult", "evaluate_retry_domain",
     "FileTransition", "ScopeDecision", "ScopePolicy", "ScopeResult", "evaluate_scope",
     "SnapshotDecision", "SnapshotResult", "evaluate_snapshot_freshness",
+    "DurableCommitDecision", "DurableCommitResult", "DurableTerminalRecord", "SQLiteTerminalStore",
     "TerminalDecision", "TerminalPolicy", "TerminalResult", "canonical_terminal_policy", "evaluate_terminal_barrier",
     "SignedArtifact", "TemporalHighWater", "TrustContext", "TrustDecision", "TrustResult", "TrustRoot", "TrustRootStatus", "evaluate_trust",
     "ValidationDecision", "ValidationGraph", "ValidationNode", "ValidationObservation", "ValidationResult", "canonical_validation_graph", "evaluate_validation_graph", "required_closure",
