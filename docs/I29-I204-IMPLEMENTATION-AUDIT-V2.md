@@ -1,27 +1,40 @@
 # I29-I204 Implementation Audit V2
 
 Audit baseline after P0 architectural fill-in: `1adfcf37819448504bf1a8102bcb250d740f6d7b`.
-Latest fix-forward HEAD covered by this document: `bb51391588c6b06f8df47dd5d9845e56f9423834`.
+Audit V2 full-suite evidence: PR #1 merge checkout `4b509354f3ea3f69a1bfec24d5d74d68b86bb668`, 399/399 tests passed on GitHub Actions / Python 3.12.13.
+Latest main HEAD after merging the compatibility regression test: `6de7315739213a3ccfbf8d8ab66a7d946ef9e902`.
 
-This audit re-evaluates the integrated OMA after obligation, provenance, aggregation, policy bundle, terminal barrier, snapshot freshness, composed execution, SQLite terminal commit, durable-boundary hardening, and authoritative subject-state CAS were implemented. It preserves the original audit as historical evidence and does not claim benchmark execution or a fresh full-suite pass.
+This audit re-evaluates the integrated OMA after obligation, provenance, aggregation, policy bundle, terminal barrier, snapshot freshness, composed execution, SQLite terminal commit, durable-boundary hardening, authoritative subject-state CAS, and durable validation-closure proof were implemented.
 
 ## Status vocabulary
 
-- `IMPLEMENTED_INITIAL`: real integrated mechanism exists and enforces the intended property in the supported trust boundary.
+- `IMPLEMENTED_INITIAL`: real integrated mechanism exists and enforces the intended property in the supported trust boundary, with direct tests and/or integrated evidence.
 - `PARTIAL`: substantial real code exists, but an important causal input remains caller-supplied, unbound, non-authoritative, non-durable, or outside the atomic boundary.
 - `CONTRADICTED`: current supported path exposes a violation of the modeled property.
 - `MISSING`: no meaningful implementation exists.
 
 ## Audit V2 headline
 
-The original horizontal P0 gaps are no longer missing. OMA now has a composed validation pipeline, an authoritative SQLite subject-state CAS, and a durable terminal commit path.
+The original horizontal P0 gaps are no longer missing. OMA now has:
 
-Two concrete terminal-boundary defects were found and fixed forward during this audit:
+- a composed validation pipeline;
+- immutable obligation, provenance, aggregation and policy roots;
+- a real false-DONE terminal barrier;
+- snapshot freshness / TOCTOU checks;
+- an authoritative SQLite subject-state CAS;
+- a guarded durable terminal boundary;
+- cryptographic validation observation / closure digests;
+- terminal rows that persist validation graph id, real terminal-barrier root and precommit closure digest;
+- process-level SQLite crash/reopen and competing-writer semantics;
+- a fresh full GitHub Actions suite of 399/399 tests.
 
-1. **Durable commit bypass**: the public SQLite store could previously be called with only snapshot/token/current and bypass composed authority/provenance/aggregation/policy/terminal checks.
-2. **Caller-authored current state**: freshness/commit could previously trust a caller-supplied `CommitState`, allowing an old state to be presented after the real subject advanced.
+Three terminal-boundary defects were found and fixed forward during V2:
 
-The next highest-priority open gap is durable validation-closure proof.
+1. **Durable commit bypass** — the public SQLite store could bypass the composed chain.
+2. **Caller-authored current state** — freshness could trust an old caller-supplied `CommitState`.
+3. **Non-auditable durable acceptance** — the terminal row did not preserve the exact validation closure that authorized it.
+
+A fourth regression was caught during the closure hardening itself: the Evidence payload digest domain was accidentally changed. Commit `bf1462f` restored compatibility with the established `oma:evidence:v1` provenance identity, and PR #1 added a permanent regression test.
 
 ## Fix-forward history
 
@@ -36,7 +49,7 @@ The low-level `_commit_prevalidated` method is intentionally private and is not 
 ### Authoritative subject-state CAS
 
 - `dfc2564` — SQLite owns `subject_states`, initialization, monotonic CAS updates, and reads authoritative state inside the same `BEGIN IMMEDIATE` used for terminal commit.
-- `4ceaa21` — execution evaluates using the authoritative state when available; the store re-reads/re-evaluates it transactionally.
+- `4ceaa21` — execution evaluates using authoritative state; the store re-reads/re-evaluates it transactionally.
 - `f4252d3` — tests cover caller lying with an old matching state after authoritative forward drift, caller fake-newer state, missing authoritative state, and durable execution.
 - `99fe93c` — guarded SQLite tests initialize authoritative state explicitly.
 - `bb51391` — authoritative state primitives exported.
@@ -47,60 +60,72 @@ Supported-path consequence:
 
 The final TOCTOU boundary now uses the SQLite-owned subject row and serializes subject-state comparison with terminal commit.
 
+### Durable validation-closure proof
+
+- `f093851` / `f5a4f85` — cryptographic graph-bound digests over validation observations / full closure.
+- `ec51f41` — validation observations bind factual gate inputs/results; native gate roots are propagated when available.
+- `ea876ce` — SQLite terminal row persists `validation_graph_id`, `terminal_barrier_root`, and `precommit_closure_digest` in the same transaction as terminalization.
+- `bf1462f` — restores historical `oma:evidence:v1` payload digest compatibility after closure refactor.
+- `44548bb` — exports validation digest primitives.
+- `4da0f1c` — tests deterministic graph binding, factual-input sensitivity, terminal root propagation, durable proof persistence and reopen.
+- PR #1 / `fdacd93` — evidence-digest regression coverage; full CI succeeded before squash merge.
+
+The durable terminal record is now self-auditable for the supported pre-atomic validation path: graph identity, real terminal barrier and the deterministic precommit observation set are persisted together with snapshot/token/state roots.
+
 ## Item-level matrix
 
 | Item | Topic | V2 status | Current evidence | Remaining gap |
 |---|---|---|---|---|
 | 29 | Scope-control integrity | PARTIAL | `scope.py`, composed pipeline | `FileTransition.roles` and `touched` remain caller-supplied; no authoritative workspace transition/role source |
-| 30 | Provenance completeness / laundering | IMPLEMENTED_INITIAL | `provenance.py`, snapshot evidence-root binding, pipeline | trusted verifier/root sets are configuration objects rather than cryptographically authenticated identities |
-| 31 | Aggregation / evidence selection | IMPLEMENTED_INITIAL | `aggregation.py`, expected set, pair/run binding, policy bundle | policy precommit timing is not durably timestamped; expected set originates from configured input |
+| 30 | Provenance completeness / laundering | IMPLEMENTED_INITIAL | `provenance.py`, native provenance root propagated into validation closure | trusted verifier/root sets are configuration objects rather than cryptographically authenticated identities |
+| 31 | Aggregation / evidence selection | IMPLEMENTED_INITIAL | expected set + pair/run binding + native aggregation root in closure | expected-set issuance/precommit timing is configured, not durably timestamped |
 | 32 | Retry / recovery causal integrity | PARTIAL | `retry.py`, pipeline pair/run binding | retry event/cost history remains supplied as an in-memory tuple; no authoritative durable retry ledger |
-| 33 | Termination / false-DONE | IMPLEMENTED_INITIAL | `terminal.py`, canonical terminal policy, pipeline | terminal barrier root is computed but currently discarded by pipeline observation construction and not persisted in terminal record |
-| 34 | Obligation-set integrity | IMPLEMENTED_INITIAL | `obligation.py`, obligation root bound to snapshot | expected manifest issuance/history is not durably authoritative |
-| 35 | Policy composition | IMPLEMENTED_INITIAL | `policy.py`, 10 policy kinds, bundle root bound to snapshot/current | expected policy bundle is configured rather than signed/durably issued |
-| 36 | TOCTOU / snapshot consistency | IMPLEMENTED_INITIAL | `snapshot.py`, SQLite `subject_states`, same-transaction authoritative read + terminal write | authoritative guarantee holds only for state changes routed through this SQLite state CAS; external workspace/application state still needs an adapter into it |
-| 37 | Commit replay / duplicate finalization | IMPLEMENTED_INITIAL | SQLite `UNIQUE(token_id)` and `UNIQUE(subject_id, terminal_epoch)`, concurrency semantics | commit-token issuance/authenticity is not implemented; token object can be constructed by caller |
-| 38 | Crash/restart durability | IMPLEMENTED_INITIAL | WAL + FULL synchronous; process-exit rollback and committed reopen tests before V2 changes | evidence covers process crash/reopen, not physical power loss/filesystem corruption; fresh post-V2 rerun still required |
-| 39 | Recovery reconciliation / exactly-once effects | PARTIAL | atomic terminal row, `durability.py` model | ledger/provenance/external effects are not written in the same SQLite transaction; old phase model is not integrated with real effect stores |
-| 40 | Authority/capability integrity | PARTIAL | `authority.py`, pipeline | capabilities are not cryptographically bound to trust roots; actions/targets/scopes remain free strings |
-| 41 | Trust-root rotation / compromise | PARTIAL | `trust.py` | no real signature verification, key material, durable revocation/trust-root store |
-| 42 | Clock/epoch/freshness | PARTIAL | trust temporal gate + snapshot monotonicity | temporal high-water remains caller-supplied rather than durably monotonic/authoritative |
-| 43 | Identity/canonicalization | PARTIAL | `identity.py` typed canonical identity | most other modules still carry raw string identifiers instead of consuming typed identity values |
-| 44 | Namespace/object confusion | PARTIAL | namespace-aware identity digest | cross-module object IDs are not typed-by-construction; namespace enforcement is not universal |
-| 45 | Serialization/parser ambiguity | PARTIAL | strict JSON ingress for `raw_json` | acceptance-critical Python objects can be instantiated directly; parser/schema is not mandatory ingress for all structures |
-| 46 | Validation-order/dependency integrity | PARTIAL | composed pipeline internally produces observations; terminal barrier exact prerequisite set; durable store re-evaluates closure | `ValidationResult.validation_closure_root` remains a sorted node-id tuple; generic observation roots do not bind every gate-specific root/context |
-| 47 | End-to-end adversarial composition | IMPLEMENTED_INITIAL | `pipeline.py`, `execution.py`, guarded SQLite commit, authoritative subject state | durable exact-closure proof and external-effect atomicity/reconciliation remain unresolved |
+| 33 | Termination / false-DONE | IMPLEMENTED_INITIAL | canonical terminal policy; real `terminal_barrier_root` propagated and persisted | external effects after terminalization still require atomic/outbox semantics |
+| 34 | Obligation-set integrity | IMPLEMENTED_INITIAL | obligation manifest/root bound to snapshot and closure | expected manifest issuance/history is not durably authoritative |
+| 35 | Policy composition | IMPLEMENTED_INITIAL | 10 policy kinds; policy bundle root bound to snapshot/current and closure | expected policy bundle is configured rather than signed/durably issued |
+| 36 | TOCTOU / snapshot consistency | IMPLEMENTED_INITIAL | SQLite `subject_states`; same-transaction authoritative read + terminal write | external workspace/application state must be adapted into this CAS to inherit the guarantee |
+| 37 | Commit replay / duplicate finalization | IMPLEMENTED_INITIAL | SQLite `UNIQUE(token_id)` + `UNIQUE(subject_id, terminal_epoch)` + competing-writer tests | commit-token issuance/authenticity is not implemented; matching tokens remain constructible by caller |
+| 38 | Crash/restart durability | IMPLEMENTED_INITIAL | WAL + FULL synchronous; process-exit rollback/commit-reopen coverage; full suite green | no claim for physical power loss/filesystem corruption beyond SQLite/OS guarantees tested here |
+| 39 | Recovery reconciliation / exactly-once effects | PARTIAL | atomic terminal row; durable proof; `durability.py` semantic model | ledger/provenance/external effects are not all committed through the same transaction/outbox |
+| 40 | Authority/capability integrity | PARTIAL | `authority.py`, factual authority observation bound into closure | capabilities are not cryptographically bound to trust roots; action/target/scope remain free strings |
+| 41 | Trust-root rotation / compromise | PARTIAL | `trust.py`, factual trust observation bound into closure | no real signature verification, key material, durable revocation/trust-root store |
+| 42 | Clock/epoch/freshness | PARTIAL | trust temporal gate + authoritative state monotonicity | trust temporal high-water remains supplied rather than durably monotonic/authoritative |
+| 43 | Identity/canonicalization | PARTIAL | typed canonical identity + identity observation factual binding | most cross-module IDs still use raw strings instead of typed identity values |
+| 44 | Namespace/object confusion | PARTIAL | namespace-aware identity digest | namespace/type enforcement is not universal across cross-module objects |
+| 45 | Serialization/parser ambiguity | PARTIAL | strict JSON ingress; parse observation binds raw payload + schema | acceptance-critical Python objects can still be instantiated directly; parser is not universal ingress |
+| 46 | Validation-order/dependency integrity | IMPLEMENTED_INITIAL | internal composed observations; graph dependency checks; cryptographic closure digest; durable precommit proof | generic validation primitives are not isolation from malicious code inside the same interpreter |
+| 47 | End-to-end adversarial composition | IMPLEMENTED_INITIAL | composed evaluator + guarded executor + authoritative CAS + durable closure proof + 399-test CI | remaining limitations are the P1 trust/ledger/typed-ingress boundaries below, not a missing composed path |
 
-## Open P0 — durable closure proof
+## Full-suite evidence
 
-`TerminalResult.terminal_barrier_root` hashes termination policy + requested action + every prerequisite observation and evidence root. However `pipeline.py` currently discards that gate-specific root when creating the `terminal_barrier` `ValidationObservation`; the observation receives the generic pipeline hash of node/decision/reasons instead.
+GitHub Actions workflow `CI`, PR #1, run `32291665157`, job `96193648515`:
 
-The SQLite terminal row also does not persist:
+```text
+CHECKOUT = PASS
+PYTHON = 3.12.13
+INSTALL = PASS
+PYTEST = PASS
+TESTS_PASSED = 399
+TESTS_FAILED = 0
+DURATION = 1.35s
+```
 
-- terminal barrier root;
-- validation graph id/version;
-- cryptographic validation closure root.
+The workflow checked out GitHub's PR merge commit `4b509354f3ea3f69a1bfec24d5d74d68b86bb668`, which combined main `4da0f1ce4bbf566786a70c06c0f57242ca7b906c` with the evidence-digest compatibility test `fdacd938dd983f41d4736a654f6376dca1bdba29`. PR #1 then squash-merged that test into main as `6de7315739213a3ccfbf8d8ab66a7d946ef9e902`.
 
-Therefore the current durable record proves snapshot/token/state/terminal uniqueness and authoritative-state freshness, but it is not yet a self-contained proof of the exact validation closure that authorized the commit.
+This is a real whole-repository suite result, not a sum of isolated module runs.
 
-Required fix direction:
+## Remaining P1 gaps
 
-1. allow `ValidationObservation.evidence_root` to carry the real gate-specific root where one exists (`policy_bundle_root`, `provenance_root`, `obligation_root`, `aggregation_root`, `terminal_barrier_root`);
-2. define a cryptographic validation closure root over graph id + ordered node id + decision + evidence root;
-3. persist graph id, terminal barrier root, and closure root in the same terminal SQLite row;
-4. test root changes when any bound gate evidence changes and survives reopen.
+No new horizontal gate should be added without a causal failure class. The current highest-value hardening targets are:
 
-## Important P1 gaps
+1. **Commit-token issuance/authenticity** — tokens are single-use durably but are still freely constructible data objects.
+2. **Durable retry/cost ledger** — causal attempts/cost are validated but not sourced from an authoritative durable ledger.
+3. **Authoritative scope transition source** — `roles` and `touched` must eventually come from the workspace/change engine, not the caller.
+4. **Durable temporal high-water / trust roots** — trust rollback checks need durable monotonic state and, for hostile boundaries, real signatures/keys/revocation.
+5. **Terminal effects/outbox** — external ledger/provenance/side effects need same-transaction or durable outbox/idempotent reconciliation semantics.
+6. **Typed identity + strict serialization expansion** — reduce raw-string/object construction paths at trust boundaries.
 
-1. Scope roles and touch history need an authoritative workspace/change source.
-2. Retry/cost history needs a durable causal ledger.
-3. Temporal high-water needs durable monotonic storage.
-4. Token issuance needs an authenticated/controlled issuer rather than a freely constructible dataclass.
-5. Trust/capabilities need signatures/keys/revocation if the boundary includes untrusted producers.
-6. Typed identity and strict serialization need to become mandatory across acceptance-critical ingress.
-7. Ledger/provenance/external terminal effects need either the same transaction or an outbox/reconciliation protocol with durable uniqueness.
-
-## Scientific status at V2
+## Scientific status after Audit V2
 
 ```text
 PROPERTY_MODEL_I29_I204 = TEST_CONFIRMED
@@ -109,23 +134,18 @@ COMPOSED_PIPELINE_EXISTS = YES
 DURABLE_SQLITE_TERMINAL_PATH_EXISTS = YES
 PUBLIC_DURABLE_COMMIT_BYPASS = FOUND_AND_FIXED_FORWARD
 AUTHORITATIVE_SUBJECT_STATE_CAS = IMPLEMENTED_INITIAL
-DURABLE_VALIDATION_CLOSURE_PROOF = NO
+DURABLE_VALIDATION_CLOSURE_PROOF = IMPLEMENTED_INITIAL
+FRESH_FULL_REPOSITORY_SUITE = PASS_399_OF_399
+I29_I204_ALL_ITEMS_IMPLEMENTED = NO
 I29_I204_GLOBAL_IMPLEMENTATION_CONFIRMED = NO
-FRESH_FULL_CURRENT_SUITE = NOT_EXECUTED
 BENCHMARK_EXECUTED = NO
 MEASURED_PRODUCT_EFFECT = NO
 ```
 
-## Test caveat
+`GLOBAL_IMPLEMENTATION_CONFIRMED = NO` remains intentional: items 29, 32, 39-45 still have explicit partial boundaries. A green suite proves the implemented contracts; it does not prove properties the code does not yet claim to implement.
 
-Before V2 fix-forward, SQLite durability tests were executed successfully, including crash/reopen and concurrent writer uniqueness. The durable API and authoritative-state path were modified after those runs. The new tests are published, but a fresh whole-repository execution at the latest fix-forward HEAD has not been observed in this runtime. Do not carry the earlier 9/9 result forward as proof that the modified HEAD is fully green.
+## Next work unit
 
-## Next work units
+Do not start benchmark yet.
 
-Do not add new horizontal gates.
-
-Priority order:
-
-1. `DURABLE_CLOSURE_PROOF` — propagate/persist gate roots and a cryptographic validation closure root.
-2. full-suite clean execution and cross-module adversarial pack.
-3. then reassess I29-I204 for promotion; only after that begin benchmark execution.
+Next: `COMMIT_TOKEN_ISSUANCE_AUTHENTICITY_AUDIT` — first adversarially prove whether freely constructible `CommitToken` can create a new acceptance path that bypasses any intended authority/closure property. Only then implement the minimal issuance mechanism if the attack is causally real.
