@@ -140,3 +140,33 @@ def test_unknown_revoked_node_blocks():
     policy, nodes = base()
     policy = replace(policy, revoked_node_ids=frozenset({"ghost"}))
     assert evaluate(policy, nodes).decision is ProvenanceDecision.BLOCK
+
+
+def test_payload_digest_binding_allows():
+    policy, nodes = base()
+    result = evaluate_provenance(
+        policy,
+        nodes,
+        subject_id="s",
+        subject_state_id="st",
+        verification_context_id="v",
+        policy_bundle_id="p",
+        required_evidence_ids=frozenset({"e1"}),
+        required_evidence_digests={"e1": "d1"},
+    )
+    assert result.decision is ProvenanceDecision.ALLOW
+
+
+def test_payload_digest_mismatch_blocks():
+    policy, nodes = base()
+    result = evaluate_provenance(
+        policy,
+        nodes,
+        subject_id="s",
+        subject_state_id="st",
+        verification_context_id="v",
+        policy_bundle_id="p",
+        required_evidence_ids=frozenset({"e1"}),
+        required_evidence_digests={"e1": "other"},
+    )
+    assert result.decision is ProvenanceDecision.BLOCK
