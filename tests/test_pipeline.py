@@ -4,6 +4,7 @@ from oma.acceptance import AcceptanceContext, Evidence
 from oma.authority import AuthorityContext, AuthorityRequest, Capability
 from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
 from oma.identity import IdentityPolicy, StrictSchema
+from oma.obligation import ObligationManifest, ObligationSpec
 from oma.pipeline import ComposedPipelineInput, evaluate_composed_pipeline
 from oma.retry import RetryDomain, RetryEvent, RetryEventKind, RetryPolicy
 from oma.scope import FileTransition, ScopePolicy
@@ -18,6 +19,12 @@ from oma.validation import ValidationDecision, canonical_validation_graph, requi
 
 
 def valid_input() -> ComposedPipelineInput:
+    obligation_manifest = ObligationManifest(
+        obligation_set_id="obligation-set-1",
+        obligations=(
+            ObligationSpec("obligation-1", "requirement:obligation-1", 1),
+        ),
+    )
     return ComposedPipelineInput(
         raw_json="{}",
         schema=StrictSchema(
@@ -163,6 +170,8 @@ def valid_input() -> ComposedPipelineInput:
             terminal_epoch=1,
         ),
         terminal_commit_id="terminal-1",
+        expected_obligation_manifest=obligation_manifest,
+        presented_obligation_manifest=obligation_manifest,
     )
 
 
@@ -170,11 +179,12 @@ def by_node(pipeline_result):
     return {item.node_id: item for item in pipeline_result.observations}
 
 
-def test_canonical_v2_binds_scope_and_trust_into_terminal_closure():
+def test_canonical_v3_binds_scope_trust_and_obligation_into_terminal_closure():
     closure = required_closure(canonical_validation_graph())
-    assert len(closure) == 14
+    assert len(closure) == 15
     assert "scope_integrity" in closure
     assert "trust_temporal" in closure
+    assert "obligation_integrity" in closure
 
 
 def test_pipeline_cannot_accept_while_p0_stages_are_unimplemented():
@@ -197,6 +207,44 @@ def test_missing_p0_stages_are_explicitly_not_done():
         "atomic_commit",
     }
     assert {node for node in missing if observations[node].decision is ValidationDecision.NOT_DONE} == missing
+
+
+def test_valid_obligation_manifest_is_bound_into_pipeline():
+    observations = by_node(evaluate_composed_pipeline(valid_input()))
+    assert observations["obligation_integrity"].decision is ValidationDecision.ACCEPT
+
+
+def test_missing_obligation_manifest_is_not_done():
+    item = replace(
+        valid_input(),
+        expected_obligation_manifest=None,
+        presented_obligation_manifest=None,
+    )
+    result = evaluate_composed_pipeline(item)
+    assert by_node(result)["obligation_integrity"].decision is ValidationDecision.NOT_DONE
+
+
+def test_obligation_denominator_reduction_blocks_pipeline():
+    item = valid_input()
+    item = replace(
+        item,
+        acceptance_context=replace(
+            item.acceptance_context,
+            required_obligations=frozenset(),
+        ),
+        evidence=(),
+    )
+    assert evaluate_composed_pipeline(item).result.decision is ValidationDecision.BLOCK
+
+
+def test_obligation_substitution_blocks_pipeline():
+    item = valid_input()
+    presented = ObligationManifest(
+        obligation_set_id="obligation-set-1",
+        obligations=(ObligationSpec("obligation-1", "evil", 1),),
+    )
+    item = replace(item, presented_obligation_manifest=presented)
+    assert evaluate_composed_pipeline(item).result.decision is ValidationDecision.BLOCK
 
 
 def test_scope_block_precedes_missing_p0_stages():
