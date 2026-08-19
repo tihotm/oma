@@ -146,3 +146,8 @@ def test_12_trailing_json_data_is_blocked():
 def test_13_non_finite_json_number_is_blocked():
     result = strict_parse_json('{"n":NaN}', _schema())
     assert result.decision is IdentityDecision.BLOCK
+
+
+def test_14_integer_outside_exact_interop_range_is_blocked():
+    result = strict_parse_json('{"n":9007199254740992}', _schema())
+    assert result.decision is IdentityDecision.BLOCK
