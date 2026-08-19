@@ -5,6 +5,14 @@ from .acceptance import (
     Evidence,
     evaluate_acceptance,
 )
+from .aggregation import (
+    AggregationDecision,
+    AggregationItem,
+    AggregationPolicy,
+    AggregationResult,
+    aggregation_root,
+    evaluate_aggregation,
+)
 from .authority import (
     AuthorityContext,
     AuthorityDecision,
@@ -103,6 +111,12 @@ __all__ = [
     "AcceptanceResult",
     "Evidence",
     "evaluate_acceptance",
+    "AggregationDecision",
+    "AggregationItem",
+    "AggregationPolicy",
+    "AggregationResult",
+    "aggregation_root",
+    "evaluate_aggregation",
     "AuthorityContext",
     "AuthorityDecision",
     "AuthorityRequest",
