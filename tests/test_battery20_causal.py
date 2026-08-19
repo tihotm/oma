@@ -103,3 +103,11 @@ def test_07_nfkc_compatibility_aliases_collapse():
 def test_08_control_character_in_identity_is_blocked():
     result = make_typed_identity("subject", "abc\x00def", IdentityPolicy("id-policy"))
     assert result.decision is IdentityDecision.BLOCK
+
+
+def test_09_same_id_in_different_namespaces_has_different_digest():
+    policy = IdentityPolicy("id-policy")
+    a = make_typed_identity("subject", "123", policy)
+    b = make_typed_identity("policy", "123", policy)
+    assert a.identity is not None and b.identity is not None
+    assert identity_digest(a.identity) != identity_digest(b.identity)
