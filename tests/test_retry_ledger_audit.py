@@ -88,8 +88,23 @@ def test_omitting_historical_retries_no_longer_reopens_acceptance(tmp_path):
 
 def test_authoritative_retry_history_replaces_caller_tuple(tmp_path):
     item = policy_enabled_input()
-    history = over_limit_history(item)[:2]
-    caller_lie = replace(item, retry_events=(item.retry_events[0],))
+    first = item.retry_events[0]
+    second_same_run = RetryEvent(
+        event_id="event-2",
+        sequence=2,
+        kind=RetryEventKind.RETRY,
+        attempt_number=2,
+        run_id=first.run_id,
+        subject_id=first.subject_id,
+        pair_id=first.pair_id,
+        lineage_id=first.lineage_id,
+        retry_domain_id=first.retry_domain_id,
+        retry_policy_id=first.retry_policy_id,
+        reason="verification_failed",
+        cost_units=first.cost_units,
+    )
+    history = (first, second_same_run)
+    caller_lie = replace(item, retry_events=(first,))
     store = store_with_retry_history(tmp_path / "authoritative.db", item, history)
 
     result = execute_composed_pipeline(caller_lie, store)
