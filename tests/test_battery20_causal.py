@@ -89,3 +89,12 @@ def test_06_case_aliases_collapse_to_one_identity():
     assert a.decision is IdentityDecision.ALLOW
     assert b.decision is IdentityDecision.ALLOW
     assert a.identity == b.identity
+
+
+def test_07_nfkc_compatibility_aliases_collapse():
+    policy = IdentityPolicy("id-policy")
+    a = make_typed_identity("subject", "ＡＢＣ", policy)
+    b = make_typed_identity("subject", "ABC", policy)
+    assert a.decision is IdentityDecision.ALLOW
+    assert b.decision is IdentityDecision.ALLOW
+    assert a.identity == b.identity
