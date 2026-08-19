@@ -1,10 +1,9 @@
-from dataclasses import replace
-
 from oma.commit import (
     AcceptanceSnapshot,
     CommitDecision,
     CommitState,
     CommitToken,
+    commit_if_current,
     evaluate_commit,
 )
 
@@ -157,3 +156,22 @@ def test_block_precedes_conflict_for_bad_token_binding():
     state = current(consumed_token_ids=frozenset({"token:1"}))
     bad = token(subject_id="subject:2")
     assert evaluate_commit(snapshot(), bad, state, terminal_commit_id="commit:2").decision is CommitDecision.BLOCK
+
+
+def test_commit_transition_consumes_token_and_records_terminal_commit():
+    transition = commit_if_current(snapshot(), token(), current(), terminal_commit_id="commit:1")
+    assert transition.result.decision is CommitDecision.ALLOW
+    assert transition.state.consumed_token_ids == frozenset({"token:1"})
+    assert transition.state.terminal_commit_ids == frozenset({"commit:1"})
+
+
+def test_second_commit_after_transition_conflicts():
+    first = commit_if_current(snapshot(), token(), current(), terminal_commit_id="commit:1")
+    second = commit_if_current(
+        snapshot(),
+        token(token_id="token:2"),
+        first.state,
+        terminal_commit_id="commit:2",
+    )
+    assert second.result.decision is CommitDecision.CONFLICT
+    assert second.state == first.state
