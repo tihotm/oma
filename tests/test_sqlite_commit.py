@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -66,6 +67,29 @@ def test_same_subject_epoch_competing_commit_conflicts(tmp_path):
     assert result.decision is DurableCommitDecision.CONFLICT
     assert result.reasons == ("terminal_epoch_already_committed",)
     assert store.count() == 1
+
+
+def test_concurrent_same_subject_epoch_has_one_winner(tmp_path):
+    snapshot, token, current = fixture()
+    path = tmp_path / "oma.db"
+    SQLiteTerminalStore(path)
+
+    def attempt(index: int):
+        local_store = SQLiteTerminalStore(path)
+        local_token = replace(token, token_id=f"token-{index}")
+        return local_store.commit(
+            snapshot,
+            local_token,
+            current,
+            terminal_commit_id=f"terminal-{index}",
+        ).decision
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        decisions = list(pool.map(attempt, (1, 2)))
+
+    assert decisions.count(DurableCommitDecision.COMMITTED) == 1
+    assert decisions.count(DurableCommitDecision.CONFLICT) == 1
+    assert SQLiteTerminalStore(path).count() == 1
 
 
 def test_token_replay_across_different_subject_conflicts(tmp_path):
