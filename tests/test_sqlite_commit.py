@@ -8,6 +8,7 @@ import runpy
 import subprocess
 import sys
 
+from oma.authority_registry import AuthorityRegistryDecision, SQLiteAuthorityRegistry
 from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
 from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import DurableCommitDecision, SQLiteTerminalStore, SubjectStateDecision
@@ -56,6 +57,9 @@ def initialized_public_store(path, item):
     assert SQLiteRetryLedger(path).initialize(
         item.retry_policy, item.retry_domain, item.retry_events[0]
     ).decision is RetryLedgerDecision.WRITTEN
+    assert SQLiteAuthorityRegistry(path).initialize_context(
+        item.authority_context, item.capabilities
+    ).decision is AuthorityRegistryDecision.WRITTEN
     return store
 
 
