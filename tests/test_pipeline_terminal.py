@@ -5,19 +5,20 @@ import runpy
 from oma.pipeline import evaluate_composed_pipeline
 from oma.validation import ValidationDecision
 
-
 _policy_tests = runpy.run_path(str(Path(__file__).with_name("test_pipeline_policy.py")))
 policy_enabled_input = _policy_tests["policy_enabled_input"]
 by_node = runpy.run_path(str(Path(__file__).with_name("test_pipeline.py")))["by_node"]
 
 
-def test_terminal_barrier_is_real_and_waits_for_snapshot_freshness():
+def test_terminal_barrier_allows_when_all_prerequisites_are_fresh():
     result = evaluate_composed_pipeline(policy_enabled_input())
     observations = by_node(result)
     assert observations["policy_bundle"].decision is ValidationDecision.ACCEPT
     assert observations["aggregation"].decision is ValidationDecision.ACCEPT
-    assert observations["snapshot_freshness"].decision is ValidationDecision.NOT_DONE
-    assert observations["terminal_barrier"].decision is ValidationDecision.NOT_DONE
+    assert observations["snapshot_freshness"].decision is ValidationDecision.ACCEPT
+    assert observations["terminal_barrier"].decision is ValidationDecision.ACCEPT
+    assert observations["commit_authorization"].decision is ValidationDecision.ACCEPT
+    assert observations["atomic_commit"].decision is ValidationDecision.NOT_DONE
     assert result.result.decision is ValidationDecision.NOT_DONE
 
 
