@@ -103,27 +103,31 @@ def required_closure(graph: ValidationGraph) -> frozenset[str]:
     return frozenset(closure)
 
 
-def validation_closure_digest(
+def validation_observation_digest(
     graph: ValidationGraph,
     observations: Iterable[ValidationObservation],
+    *,
+    domain: str,
 ) -> str | None:
-    """Hash the exact terminal closure, decisions and evidence roots."""
+    """Hash a deterministic, graph-ordered set of known observations."""
     by_id, error = _validate_graph(graph)
-    if error is not None:
+    if error is not None or not domain:
         return None
     items = tuple(observations)
     ids = [item.node_id for item in items]
-    if len(ids) != len(set(ids)):
+    if not items or len(ids) != len(set(ids)):
         return None
     if any(item.node_id not in by_id or not item.evidence_root for item in items):
         return None
 
     closure = required_closure(graph)
+    if any(item.node_id not in closure for item in items):
+        return None
     observed = {item.node_id: item for item in items}
-    if set(observed) != set(closure):
+    ordered_ids = [node.node_id for node in graph.nodes if node.node_id in observed]
+    if len(ordered_ids) != len(items):
         return None
 
-    ordered_ids = [node.node_id for node in graph.nodes if node.node_id in closure]
     rows = [
         "\0".join(
             (
@@ -136,13 +140,25 @@ def validation_closure_digest(
     ]
     payload = "\0".join(
         (
-            "oma:validation-closure:v1",
+            f"oma:validation-observations:{domain}:v1",
             graph.validation_graph_id,
             graph.terminal_node_id,
             "\n".join(rows),
         )
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def validation_closure_digest(
+    graph: ValidationGraph,
+    observations: Iterable[ValidationObservation],
+) -> str | None:
+    """Hash the exact terminal closure, decisions and evidence roots."""
+    items = tuple(observations)
+    closure = required_closure(graph)
+    if not closure or {item.node_id for item in items} != set(closure):
+        return None
+    return validation_observation_digest(graph, items, domain="closure")
 
 
 def evaluate_validation_graph(
