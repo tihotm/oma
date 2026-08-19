@@ -93,6 +93,13 @@ from .retry import (
     evaluate_retry_domain,
 )
 from .scope import FileTransition, ScopeDecision, ScopePolicy, ScopeResult, evaluate_scope
+from .terminal import (
+    TerminalDecision,
+    TerminalPolicy,
+    TerminalResult,
+    canonical_terminal_policy,
+    evaluate_terminal_barrier,
+)
 from .trust import (
     SignedArtifact,
     TemporalHighWater,
@@ -192,6 +199,11 @@ __all__ = [
     "ScopePolicy",
     "ScopeResult",
     "evaluate_scope",
+    "TerminalDecision",
+    "TerminalPolicy",
+    "TerminalResult",
+    "canonical_terminal_policy",
+    "evaluate_terminal_barrier",
     "SignedArtifact",
     "TemporalHighWater",
     "TrustContext",
