@@ -93,6 +93,12 @@ from .retry import (
     RetryResult,
     evaluate_retry_domain,
 )
+from .retry_ledger import (
+    RetryLedgerDecision,
+    RetryLedgerResult,
+    SQLiteRetryLedger,
+    retry_policy_digest,
+)
 from .scope import FileTransition, ScopeDecision, ScopePolicy, ScopeResult, evaluate_scope
 from .snapshot import SnapshotDecision, SnapshotResult, evaluate_snapshot_freshness
 from .sqlite_commit import (
@@ -146,6 +152,7 @@ __all__ = [
     "PolicyBinding", "PolicyBundle", "PolicyBundleDecision", "PolicyBundleResult", "evaluate_policy_bundle", "policy_bundle_root", "policy_object_root",
     "ProvenanceDecision", "ProvenanceNode", "ProvenancePolicy", "ProvenanceResult", "evaluate_provenance",
     "RetryDecision", "RetryDomain", "RetryEvent", "RetryEventKind", "RetryPolicy", "RetryResult", "evaluate_retry_domain",
+    "RetryLedgerDecision", "RetryLedgerResult", "SQLiteRetryLedger", "retry_policy_digest",
     "FileTransition", "ScopeDecision", "ScopePolicy", "ScopeResult", "evaluate_scope",
     "SnapshotDecision", "SnapshotResult", "evaluate_snapshot_freshness",
     "DurableCommitDecision", "DurableCommitResult", "DurableTerminalRecord", "SQLiteTerminalStore", "SubjectStateDecision", "SubjectStateResult",
