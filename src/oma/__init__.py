@@ -43,6 +43,16 @@ from .retry import (
     evaluate_retry_domain,
 )
 from .scope import FileTransition, ScopeDecision, ScopePolicy, ScopeResult, evaluate_scope
+from .trust import (
+    SignedArtifact,
+    TemporalHighWater,
+    TrustContext,
+    TrustDecision,
+    TrustResult,
+    TrustRoot,
+    TrustRootStatus,
+    evaluate_trust,
+)
 
 __all__ = [
     "AcceptanceContext",
@@ -84,4 +94,12 @@ __all__ = [
     "ScopePolicy",
     "ScopeResult",
     "evaluate_scope",
+    "SignedArtifact",
+    "TemporalHighWater",
+    "TrustContext",
+    "TrustDecision",
+    "TrustResult",
+    "TrustRoot",
+    "TrustRootStatus",
+    "evaluate_trust",
 ]
