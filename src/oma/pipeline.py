@@ -9,6 +9,7 @@ from .authority import AuthorityDecision, evaluate_authority
 from .commit import CommitDecision, evaluate_commit
 from .identity import IdentityDecision, make_typed_identity, strict_parse_json
 from .obligation import ObligationDecision, evaluate_obligation_manifest
+from .provenance import ProvenanceDecision, evaluate_provenance
 from .retry import RetryDecision, evaluate_retry_domain
 from .scope import ScopeDecision, evaluate_scope
 from .trust import TrustDecision, evaluate_trust
@@ -47,6 +48,8 @@ class ComposedPipelineInput:
     terminal_commit_id: str
     expected_obligation_manifest: Any | None = None
     presented_obligation_manifest: Any | None = None
+    provenance_policy: Any | None = None
+    provenance_nodes: tuple[Any, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +65,21 @@ def _evidence_root(
 ) -> str:
     payload = "\0".join((node_id, decision.value, *reasons)).encode("utf-8")
     return hashlib.sha256(b"oma:pipeline:v1\0" + payload).hexdigest()
+
+
+def _evidence_payload_digest(item: Any) -> str:
+    payload = "\0".join(
+        (
+            item.evidence_id,
+            item.obligation_id,
+            item.subject_id,
+            item.subject_state_id,
+            item.verification_context_id,
+            item.policy_bundle_id,
+            "1" if item.passed else "0",
+        )
+    ).encode("utf-8")
+    return hashlib.sha256(b"oma:evidence:v1\0" + payload).hexdigest()
 
 
 def _observation(
@@ -143,7 +161,37 @@ def evaluate_composed_pipeline(
 
     observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_not_implemented",)))
     observations.append(_observation("snapshot_freshness", ValidationDecision.NOT_DONE, ("snapshot_freshness_not_implemented",)))
-    observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_not_implemented",)))
+
+    if pipeline_input.provenance_policy is None or pipeline_input.provenance_nodes is None:
+        observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_missing",)))
+    else:
+        evidence_digests = {
+            item.evidence_id: _evidence_payload_digest(item)
+            for item in pipeline_input.evidence
+        }
+        provenance = evaluate_provenance(
+            pipeline_input.provenance_policy,
+            pipeline_input.provenance_nodes,
+            subject_id=pipeline_input.acceptance_context.subject_id,
+            subject_state_id=pipeline_input.acceptance_context.subject_state_id,
+            verification_context_id=pipeline_input.acceptance_context.verification_context_id,
+            policy_bundle_id=pipeline_input.acceptance_context.policy_bundle_id,
+            required_evidence_ids=frozenset(evidence_digests),
+            required_evidence_digests=evidence_digests,
+        )
+        provenance_reasons = provenance.reasons
+        provenance_decision = (
+            ValidationDecision.ACCEPT
+            if provenance.decision is ProvenanceDecision.ALLOW
+            else ValidationDecision.BLOCK
+        )
+        if (
+            provenance.decision is ProvenanceDecision.ALLOW
+            and pipeline_input.snapshot.evidence_root != provenance.provenance_root
+        ):
+            provenance_decision = ValidationDecision.BLOCK
+            provenance_reasons = ("snapshot_provenance_root_mismatch",)
+        observations.append(_observation("provenance", provenance_decision, provenance_reasons))
 
     if pipeline_input.expected_obligation_manifest is None or pipeline_input.presented_obligation_manifest is None:
         observations.append(_observation("obligation_integrity", ValidationDecision.NOT_DONE, ("obligation_manifest_missing",)))
