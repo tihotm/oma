@@ -60,3 +60,10 @@ def test_01_duplicate_provenance_node_blocks():
     result = _eval((root, evidence, duplicate))
     assert result.decision is ProvenanceDecision.BLOCK
     assert "invalid_or_duplicate_provenance_node" in result.reasons
+
+
+def test_02_provenance_payload_substitution_blocks():
+    root, evidence = _prov_nodes()
+    result = _eval((root, evidence), digests={"e1": "expected-digest"})
+    assert result.decision is ProvenanceDecision.BLOCK
+    assert "evidence_payload_digest_mismatch:e1" in result.reasons
