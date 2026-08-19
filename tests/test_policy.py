@@ -12,6 +12,7 @@ from oma.policy import (
 
 KINDS = frozenset(
     {
+        "serialization",
         "identity",
         "scope",
         "authority",
