@@ -20,6 +20,7 @@ from .policy import (
 from .provenance import ProvenanceDecision, evaluate_provenance
 from .retry import RetryDecision, evaluate_retry_domain
 from .scope import ScopeDecision, evaluate_scope
+from .terminal import TerminalDecision, canonical_terminal_policy, evaluate_terminal_barrier
 from .trust import TrustDecision, evaluate_trust
 from .validation import (
     ValidationDecision,
@@ -77,6 +78,7 @@ class ComposedPipelineInput:
     aggregation_policy: Any | None = None
     expected_policy_bundle: Any | None = None
     termination_policy_id: str | None = None
+    terminal_action: str = "COMMIT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +133,7 @@ def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBun
     ):
         return None
 
+    termination_policy = canonical_terminal_policy(pipeline_input.termination_policy_id)
     bindings = (
         PolicyBinding(
             "serialization",
@@ -179,8 +182,8 @@ def _presented_policy_bundle(pipeline_input: ComposedPipelineInput) -> PolicyBun
         ),
         PolicyBinding(
             "termination",
-            pipeline_input.termination_policy_id,
-            policy_object_root("termination", pipeline_input.termination_policy_id),
+            termination_policy.termination_policy_id,
+            policy_object_root("termination", termination_policy),
         ),
     )
     return PolicyBundle(
@@ -392,7 +395,21 @@ def evaluate_composed_pipeline(
         )
     )
 
-    observations.append(_observation("terminal_barrier", ValidationDecision.NOT_DONE, ("terminal_barrier_not_implemented",)))
+    if pipeline_input.termination_policy_id is None:
+        observations.append(_observation("terminal_barrier", ValidationDecision.NOT_DONE, ("termination_policy_missing",)))
+    else:
+        terminal = evaluate_terminal_barrier(
+            canonical_terminal_policy(pipeline_input.termination_policy_id),
+            tuple(observations),
+            requested_action=pipeline_input.terminal_action,
+        )
+        terminal_decision = {
+            TerminalDecision.ALLOW: ValidationDecision.ACCEPT,
+            TerminalDecision.NOT_DONE: ValidationDecision.NOT_DONE,
+            TerminalDecision.STALE: ValidationDecision.STALE,
+            TerminalDecision.BLOCK: ValidationDecision.BLOCK,
+        }[terminal.decision]
+        observations.append(_observation("terminal_barrier", terminal_decision, terminal.reasons))
 
     commit = evaluate_commit(
         pipeline_input.snapshot,
