@@ -21,7 +21,7 @@ def initialized_store(path, item):
     return store
 
 
-def exhausted_history(item):
+def over_limit_history(item):
     first = item.retry_events[0]
     second = RetryEvent(
         event_id="event-2",
@@ -37,12 +37,26 @@ def exhausted_history(item):
         reason="verification_failed",
         cost_units=first.cost_units,
     )
-    return (first, second)
+    third = RetryEvent(
+        event_id="event-3",
+        sequence=3,
+        kind=RetryEventKind.RETRY,
+        attempt_number=3,
+        run_id="run-3",
+        subject_id=first.subject_id,
+        pair_id=first.pair_id,
+        lineage_id=first.lineage_id,
+        retry_domain_id=first.retry_domain_id,
+        retry_policy_id=first.retry_policy_id,
+        reason="verification_failed",
+        cost_units=first.cost_units,
+    )
+    return (first, second, third)
 
 
-def test_complete_exhausted_retry_history_blocks_new_terminalization(tmp_path):
+def test_complete_over_limit_retry_history_blocks_terminalization(tmp_path):
     item = policy_enabled_input()
-    item = replace(item, retry_events=exhausted_history(item))
+    item = replace(item, retry_events=over_limit_history(item))
     store = initialized_store(tmp_path / "complete.db", item)
 
     result = execute_composed_pipeline(item, store)
@@ -52,10 +66,11 @@ def test_complete_exhausted_retry_history_blocks_new_terminalization(tmp_path):
     assert store.count() == 0
 
 
-def test_omitting_historical_retry_can_reopen_acceptance_path(tmp_path):
+def test_omitting_historical_retries_can_reopen_acceptance_path(tmp_path):
     item = policy_enabled_input()
-    # The complete factual history would contain an exhausted second attempt,
-    # but the supported execution boundary accepts the caller-supplied tuple.
+    # The factual history can contain attempts 2 and 3, where attempt 3 exceeds
+    # the policy. The supported boundary currently accepts only the tuple the
+    # caller presents, so omitting those historical events reopens ACCEPT.
     omitted = replace(item, retry_events=(item.retry_events[0],))
     store = initialized_store(tmp_path / "omitted.db", omitted)
 
