@@ -3,6 +3,7 @@ from pathlib import Path
 import runpy
 
 from oma.execution import execute_composed_pipeline
+from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import SQLiteTerminalStore, SubjectStateDecision
 from oma.validation import ValidationDecision
 
@@ -14,6 +15,9 @@ policy_enabled_input = _policy_tests["policy_enabled_input"]
 def initialized_store(path, item):
     store = SQLiteTerminalStore(path)
     assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
+    assert SQLiteRetryLedger(path).initialize(
+        item.retry_policy, item.retry_domain, item.retry_events[0]
+    ).decision is RetryLedgerDecision.WRITTEN
     return store
 
 
