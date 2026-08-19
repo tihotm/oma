@@ -98,3 +98,8 @@ def test_07_nfkc_compatibility_aliases_collapse():
     assert a.decision is IdentityDecision.ALLOW
     assert b.decision is IdentityDecision.ALLOW
     assert a.identity == b.identity
+
+
+def test_08_control_character_in_identity_is_blocked():
+    result = make_typed_identity("subject", "abc\x00def", IdentityPolicy("id-policy"))
+    assert result.decision is IdentityDecision.BLOCK
