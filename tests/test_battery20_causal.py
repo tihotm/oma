@@ -111,3 +111,12 @@ def test_09_same_id_in_different_namespaces_has_different_digest():
     b = make_typed_identity("policy", "123", policy)
     assert a.identity is not None and b.identity is not None
     assert identity_digest(a.identity) != identity_digest(b.identity)
+
+
+def test_10_mixed_script_namespace_spoof_is_currently_accepted():
+    policy = IdentityPolicy("id-policy")
+    latin = make_typed_identity("subject", "123", policy)
+    spoof = make_typed_identity("ѕubject", "123", policy)  # Cyrillic small dze
+    assert latin.decision is IdentityDecision.ALLOW
+    assert spoof.decision is IdentityDecision.ALLOW
+    assert latin.identity != spoof.identity
