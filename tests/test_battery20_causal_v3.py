@@ -67,3 +67,16 @@ def test_02_provenance_payload_substitution_blocks():
     result = _eval((root, evidence), digests={"e1": "expected-digest"})
     assert result.decision is ProvenanceDecision.BLOCK
     assert "evidence_payload_digest_mismatch:e1" in result.reasons
+
+
+def test_03_unrelated_provenance_branch_blocks():
+    root, evidence = _prov_nodes()
+    unrelated = replace(
+        evidence,
+        node_id="unrelated",
+        evidence_id=None,
+        payload_digest="unrelated-digest",
+    )
+    result = _eval((root, evidence, unrelated))
+    assert result.decision is ProvenanceDecision.BLOCK
+    assert "provenance_contains_unrelated_nodes" in result.reasons
