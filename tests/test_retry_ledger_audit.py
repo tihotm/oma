@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 import runpy
 
+from oma.authority_registry import AuthorityRegistryDecision, SQLiteAuthorityRegistry
 from oma.execution import execute_composed_pipeline
 from oma.retry import RetryEvent, RetryEventKind
 from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
@@ -57,6 +58,9 @@ def store_with_retry_history(path, item, history):
     ).decision is RetryLedgerDecision.WRITTEN
     for event in history[1:]:
         ledger.append(item.retry_policy, item.retry_domain, event)
+    assert SQLiteAuthorityRegistry(path).initialize_context(
+        item.authority_context, item.capabilities
+    ).decision is AuthorityRegistryDecision.WRITTEN
     return store
 
 
