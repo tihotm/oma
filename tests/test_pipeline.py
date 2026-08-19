@@ -1,4 +1,5 @@
 from dataclasses import replace
+import hashlib
 
 from oma.acceptance import AcceptanceContext, Evidence
 from oma.authority import AuthorityContext, AuthorityRequest, Capability
@@ -6,6 +7,12 @@ from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
 from oma.identity import IdentityPolicy, StrictSchema
 from oma.obligation import ObligationManifest, ObligationSpec, obligation_root
 from oma.pipeline import ComposedPipelineInput, evaluate_composed_pipeline
+from oma.provenance import (
+    ProvenanceDecision,
+    ProvenanceNode,
+    ProvenancePolicy,
+    evaluate_provenance,
+)
 from oma.retry import RetryDomain, RetryEvent, RetryEventKind, RetryPolicy
 from oma.scope import FileTransition, ScopePolicy
 from oma.trust import (
@@ -18,12 +25,67 @@ from oma.trust import (
 from oma.validation import ValidationDecision, canonical_validation_graph, required_closure
 
 
+def evidence_digest(item: Evidence) -> str:
+    payload = "\0".join(
+        (
+            item.evidence_id,
+            item.obligation_id,
+            item.subject_id,
+            item.subject_state_id,
+            item.verification_context_id,
+            item.policy_bundle_id,
+            "1" if item.passed else "0",
+        )
+    ).encode("utf-8")
+    return hashlib.sha256(b"oma:evidence:v1\0" + payload).hexdigest()
+
+
 def valid_input() -> ComposedPipelineInput:
     obligation_manifest = ObligationManifest(
         obligation_set_id="obligation-set-1",
         obligations=(ObligationSpec("obligation-1", "requirement:obligation-1", 1),),
     )
     manifest_root = obligation_root(obligation_manifest)
+    evidence = Evidence(
+        evidence_id="evidence-1", obligation_id="obligation-1",
+        subject_id="subject-1", subject_state_id="state-1",
+        verification_context_id="verify-1", policy_bundle_id="policy-1",
+        passed=True,
+    )
+    provenance_policy = ProvenancePolicy(
+        provenance_policy_id="prov:v1",
+        trusted_root_ids=frozenset({"prov-root"}),
+        trusted_verifier_ids=frozenset({"verifier-1"}),
+    )
+    provenance_nodes = (
+        ProvenanceNode(
+            node_id="prov-root", parent_ids=frozenset(),
+            subject_id="subject-1", subject_state_id="state-1",
+            verification_context_id="verify-1", policy_bundle_id="policy-1",
+            verifier_id="verifier-1", payload_digest="source-digest",
+        ),
+        ProvenanceNode(
+            node_id="prov-leaf", parent_ids=frozenset({"prov-root"}),
+            subject_id="subject-1", subject_state_id="state-1",
+            verification_context_id="verify-1", policy_bundle_id="policy-1",
+            verifier_id="verifier-1", payload_digest=evidence_digest(evidence),
+            evidence_id="evidence-1",
+        ),
+    )
+    provenance_result = evaluate_provenance(
+        provenance_policy,
+        provenance_nodes,
+        subject_id="subject-1",
+        subject_state_id="state-1",
+        verification_context_id="verify-1",
+        policy_bundle_id="policy-1",
+        required_evidence_ids=frozenset({"evidence-1"}),
+        required_evidence_digests={"evidence-1": evidence_digest(evidence)},
+    )
+    assert provenance_result.decision is ProvenanceDecision.ALLOW
+    assert provenance_result.provenance_root is not None
+    provenance_root = provenance_result.provenance_root
+
     return ComposedPipelineInput(
         raw_json="{}",
         schema=StrictSchema(schema_id="schema:v1", schema_version=1, required_fields=frozenset()),
@@ -38,10 +100,8 @@ def valid_input() -> ComposedPipelineInput:
         ),
         transitions=(),
         authority_context=AuthorityContext(
-            authority_context_id="authority:v1",
-            authority_epoch=1,
-            now_epoch=1,
-            trusted_issuers=frozenset({"root"}),
+            authority_context_id="authority:v1", authority_epoch=1,
+            now_epoch=1, trusted_issuers=frozenset({"root"}),
         ),
         capabilities=(Capability(
             capability_id="cap-1", issuer="root", holder="agent",
@@ -73,12 +133,7 @@ def valid_input() -> ComposedPipelineInput:
             verification_context_id="verify-1", policy_bundle_id="policy-1",
             required_obligations=frozenset({"obligation-1"}),
         ),
-        evidence=(Evidence(
-            evidence_id="evidence-1", obligation_id="obligation-1",
-            subject_id="subject-1", subject_state_id="state-1",
-            verification_context_id="verify-1", policy_bundle_id="policy-1",
-            passed=True,
-        ),),
+        evidence=(evidence,),
         retry_policy=RetryPolicy(
             retry_policy_id="retry:v1", max_execution_attempts=2,
             max_cumulative_cost=10,
@@ -99,7 +154,7 @@ def valid_input() -> ComposedPipelineInput:
         snapshot=AcceptanceSnapshot(
             acceptance_snapshot_id="snapshot-1", subject_id="subject-1",
             subject_state_id="state-1", policy_bundle_id="policy-1",
-            obligation_root=manifest_root, evidence_root="evidence-root-1",
+            obligation_root=manifest_root, evidence_root=provenance_root,
             ledger_head="ledger-1", state_version=1, terminal_epoch=1,
         ),
         commit_token=CommitToken(
@@ -109,12 +164,14 @@ def valid_input() -> ComposedPipelineInput:
         commit_state=CommitState(
             subject_id="subject-1", subject_state_id="state-1",
             policy_bundle_id="policy-1", obligation_root=manifest_root,
-            evidence_root="evidence-root-1", ledger_head="ledger-1",
+            evidence_root=provenance_root, ledger_head="ledger-1",
             state_version=1, terminal_epoch=1,
         ),
         terminal_commit_id="terminal-1",
         expected_obligation_manifest=obligation_manifest,
         presented_obligation_manifest=obligation_manifest,
+        provenance_policy=provenance_policy,
+        provenance_nodes=provenance_nodes,
     )
 
 
@@ -122,15 +179,16 @@ def by_node(pipeline_result):
     return {item.node_id: item for item in pipeline_result.observations}
 
 
-def test_canonical_v3_binds_scope_trust_and_obligation_into_terminal_closure():
+def test_canonical_v3_binds_scope_trust_obligation_and_provenance_into_terminal_closure():
     closure = required_closure(canonical_validation_graph())
     assert len(closure) == 15
     assert "scope_integrity" in closure
     assert "trust_temporal" in closure
     assert "obligation_integrity" in closure
+    assert "provenance" in closure
 
 
-def test_pipeline_cannot_accept_while_p0_stages_are_unimplemented():
+def test_pipeline_cannot_accept_while_remaining_p0_stages_are_unimplemented():
     assert evaluate_composed_pipeline(valid_input()).result.decision is ValidationDecision.NOT_DONE
 
 
@@ -138,10 +196,43 @@ def test_caller_cannot_supply_validation_observations():
     assert "observations" not in ComposedPipelineInput.__dataclass_fields__
 
 
-def test_missing_p0_stages_are_explicitly_not_done():
+def test_remaining_p0_stages_are_explicitly_not_done():
     observations = by_node(evaluate_composed_pipeline(valid_input()))
-    missing = {"policy_bundle", "snapshot_freshness", "provenance", "aggregation", "terminal_barrier", "atomic_commit"}
+    missing = {"policy_bundle", "snapshot_freshness", "aggregation", "terminal_barrier", "atomic_commit"}
     assert {node for node in missing if observations[node].decision is ValidationDecision.NOT_DONE} == missing
+
+
+def test_valid_provenance_is_bound_into_pipeline():
+    observations = by_node(evaluate_composed_pipeline(valid_input()))
+    assert observations["provenance"].decision is ValidationDecision.ACCEPT
+
+
+def test_missing_provenance_is_not_done():
+    item = replace(valid_input(), provenance_policy=None, provenance_nodes=None)
+    result = evaluate_composed_pipeline(item)
+    assert by_node(result)["provenance"].decision is ValidationDecision.NOT_DONE
+
+
+def test_revoked_provenance_blocks_pipeline():
+    item = valid_input()
+    policy = replace(item.provenance_policy, revoked_node_ids=frozenset({"prov-leaf"}))
+    assert evaluate_composed_pipeline(replace(item, provenance_policy=policy)).result.decision is ValidationDecision.BLOCK
+
+
+def test_provenance_evidence_payload_substitution_blocks_pipeline():
+    item = valid_input()
+    tampered = replace(item.evidence[0], passed=False)
+    assert evaluate_composed_pipeline(replace(item, evidence=(tampered,))).result.decision is ValidationDecision.BLOCK
+
+
+def test_snapshot_provenance_root_mismatch_blocks_pipeline():
+    item = valid_input()
+    item = replace(
+        item,
+        snapshot=replace(item.snapshot, evidence_root="wrong-root"),
+        commit_state=replace(item.commit_state, evidence_root="wrong-root"),
+    )
+    assert evaluate_composed_pipeline(item).result.decision is ValidationDecision.BLOCK
 
 
 def test_valid_obligation_manifest_is_bound_into_pipeline():
