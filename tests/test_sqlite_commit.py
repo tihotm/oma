@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
+from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import DurableCommitDecision, SQLiteTerminalStore, SubjectStateDecision
 
 
@@ -49,18 +50,25 @@ def fixture():
     return snapshot, token, current
 
 
+def initialized_public_store(path, item):
+    store = SQLiteTerminalStore(path)
+    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
+    assert SQLiteRetryLedger(path).initialize(
+        item.retry_policy, item.retry_domain, item.retry_events[0]
+    ).decision is RetryLedgerDecision.WRITTEN
+    return store
+
+
 def test_public_commit_revalidates_full_composed_closure(tmp_path):
     item = policy_enabled_input()
-    store = SQLiteTerminalStore(tmp_path / "oma.db")
-    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
+    store = initialized_public_store(tmp_path / "oma.db", item)
     assert store.commit(item).decision is DurableCommitDecision.COMMITTED
     assert store.count() == 1
 
 
 def test_public_commit_blocks_incomplete_closure(tmp_path):
     item = replace(policy_enabled_input(), aggregation_policy=None)
-    store = SQLiteTerminalStore(tmp_path / "oma.db")
-    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
+    store = initialized_public_store(tmp_path / "oma.db", item)
     result = store.commit(item)
     assert result.decision is DurableCommitDecision.BLOCK
     assert result.reasons == ("durable_boundary_closure_incomplete",)
@@ -120,16 +128,8 @@ def test_token_replay_across_different_subject_conflicts(tmp_path):
     store = SQLiteTerminalStore(tmp_path / "oma.db")
     assert store._commit_prevalidated(snapshot, token, current, terminal_commit_id="terminal-1").decision is DurableCommitDecision.COMMITTED
 
-    other_snapshot = replace(
-        snapshot,
-        acceptance_snapshot_id="snapshot-2",
-        subject_id="subject-2",
-    )
-    replay = replace(
-        token,
-        acceptance_snapshot_id="snapshot-2",
-        subject_id="subject-2",
-    )
+    other_snapshot = replace(snapshot, acceptance_snapshot_id="snapshot-2", subject_id="subject-2")
+    replay = replace(token, acceptance_snapshot_id="snapshot-2", subject_id="subject-2")
     other_current = replace(current, subject_id="subject-2")
     result = store._commit_prevalidated(other_snapshot, replay, other_current, terminal_commit_id="terminal-2")
     assert result.decision is DurableCommitDecision.CONFLICT
@@ -140,10 +140,7 @@ def test_stale_state_does_not_write(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
     result = store._commit_prevalidated(
-        snapshot,
-        token,
-        replace(current, state_version=2),
-        terminal_commit_id="terminal-1",
+        snapshot, token, replace(current, state_version=2), terminal_commit_id="terminal-1"
     )
     assert result.decision is DurableCommitDecision.STALE
     assert store.count() == 0
@@ -153,10 +150,7 @@ def test_invalid_token_binding_does_not_write(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
     result = store._commit_prevalidated(
-        snapshot,
-        replace(token, subject_id="other"),
-        current,
-        terminal_commit_id="terminal-1",
+        snapshot, replace(token, subject_id="other"), current, terminal_commit_id="terminal-1"
     )
     assert result.decision is DurableCommitDecision.BLOCK
     assert store.count() == 0
