@@ -66,6 +66,16 @@ from .trust import (
     TrustRootStatus,
     evaluate_trust,
 )
+from .validation import (
+    ValidationDecision,
+    ValidationGraph,
+    ValidationNode,
+    ValidationObservation,
+    ValidationResult,
+    canonical_validation_graph,
+    evaluate_validation_graph,
+    required_closure,
+)
 
 __all__ = [
     "AcceptanceContext",
@@ -126,4 +136,12 @@ __all__ = [
     "TrustRoot",
     "TrustRootStatus",
     "evaluate_trust",
+    "ValidationDecision",
+    "ValidationGraph",
+    "ValidationNode",
+    "ValidationObservation",
+    "ValidationResult",
+    "canonical_validation_graph",
+    "evaluate_validation_graph",
+    "required_closure",
 ]
