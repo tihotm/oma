@@ -20,6 +20,11 @@ from .commit import (
 )
 from .retry import RetryDomain, RetryEvent, RetryPolicy
 from .retry_ledger import ensure_retry_schema, load_retry_events_from_connection
+from .trust import SignedArtifact, TrustContext, TrustRoot
+from .trust_registry import (
+    ensure_trust_registry_schema,
+    load_trust_artifact_from_connection,
+)
 from .validation import (
     ValidationDecision,
     canonical_validation_graph,
@@ -118,12 +123,12 @@ def _valid_state(state: CommitState) -> bool:
 
 
 class SQLiteTerminalStore:
-    """Authoritative state/history/capability CAS plus terminal commit.
+    """Authoritative durable-fact CAS plus terminal commit.
 
-    Subject state, retry history, and issued capabilities are re-read inside
-    the same ``BEGIN IMMEDIATE`` transaction used to record terminalization.
-    Public ``commit`` independently re-evaluates the composed closure against
-    those authoritative facts before persisting the durable proof.
+    Subject state, retry history, issued capabilities, and the selected trust
+    artifact are re-read inside the same ``BEGIN IMMEDIATE`` transaction used
+    to record terminalization. Public ``commit`` independently re-evaluates the
+    composed closure against those authoritative facts before persisting proof.
     """
 
     _STATE_SELECT = """
@@ -186,6 +191,7 @@ class SQLiteTerminalStore:
             )
             ensure_retry_schema(conn)
             ensure_authority_schema(conn)
+            ensure_trust_registry_schema(conn)
             columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(terminal_commits)")
             }
@@ -334,6 +340,15 @@ class SQLiteTerminalStore:
         with self._connect() as conn:
             return load_authority_capabilities_from_connection(conn, context)
 
+    def get_trust_artifact(
+        self,
+        context: TrustContext,
+        roots: tuple[TrustRoot, ...],
+        artifact_id: str,
+    ) -> SignedArtifact | None:
+        with self._connect() as conn:
+            return load_trust_artifact_from_connection(conn, context, roots, artifact_id)
+
     def commit(self, pipeline_input: ComposedPipelineInput) -> DurableCommitResult:
         """Atomically verify authoritative facts, closure and terminal write."""
         from .pipeline import evaluate_composed_pipeline
@@ -375,12 +390,26 @@ class SQLiteTerminalStore:
                     ("authoritative_capabilities_missing",),
                 )
 
+            authoritative_artifact = load_trust_artifact_from_connection(
+                conn,
+                pipeline_input.trust_context,
+                pipeline_input.trust_roots,
+                pipeline_input.signed_artifact.artifact_id,
+            )
+            if authoritative_artifact is None:
+                conn.rollback()
+                return DurableCommitResult(
+                    DurableCommitDecision.BLOCK,
+                    ("authoritative_trust_artifact_missing",),
+                )
+
             authoritative = _state_from_row(row)
             effective_input = replace(
                 pipeline_input,
                 commit_state=authoritative,
                 retry_events=authoritative_retry_events,
                 capabilities=authoritative_capabilities,
+                signed_artifact=authoritative_artifact,
             )
             evaluated = evaluate_composed_pipeline(effective_input)
             prior = tuple(
