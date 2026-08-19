@@ -141,3 +141,8 @@ def test_11_duplicate_json_fields_are_blocked():
 def test_12_trailing_json_data_is_blocked():
     result = strict_parse_json('{"n":1} {"n":2}', _schema())
     assert result.decision is IdentityDecision.BLOCK
+
+
+def test_13_non_finite_json_number_is_blocked():
+    result = strict_parse_json('{"n":NaN}', _schema())
+    assert result.decision is IdentityDecision.BLOCK
