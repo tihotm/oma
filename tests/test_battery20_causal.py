@@ -8,6 +8,7 @@ from oma.identity import (
     make_typed_identity,
     strict_parse_json,
 )
+from oma.scope import FileTransition, ScopeDecision, ScopePolicy, evaluate_scope
 from oma.trust import (
     SignedArtifact,
     TemporalHighWater,
@@ -55,6 +56,16 @@ def _artifact(artifact_id="artifact-1", epoch=1):
 
 def _schema():
     return StrictSchema("schema", 1, frozenset({"n"}))
+
+
+def _scope():
+    return ScopePolicy(
+        "scope-policy",
+        allowed_paths=("src",),
+        forbidden_paths=("src/secrets",),
+        protected_roles=frozenset({"security"}),
+        review_roles=frozenset({"config"}),
+    )
 
 
 def test_01_unregistered_trust_artifact_is_not_authoritative(tmp_path):
@@ -161,3 +172,8 @@ def test_15_integer_and_integral_float_are_both_accepted_with_different_runtime_
     assert integer.value is not None and floating.value is not None
     assert type(integer.value["n"]) is int
     assert type(floating.value["n"]) is float
+
+
+def test_16_scope_path_traversal_is_blocked():
+    result = evaluate_scope(_scope(), (FileTransition("src/../secret", "a", "b"),))
+    assert result.decision is ScopeDecision.BLOCK
