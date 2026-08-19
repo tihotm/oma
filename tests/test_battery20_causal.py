@@ -1,6 +1,13 @@
 from dataclasses import replace
 
-from oma.identity import IdentityDecision, IdentityPolicy, identity_digest, make_typed_identity
+from oma.identity import (
+    IdentityDecision,
+    IdentityPolicy,
+    StrictSchema,
+    identity_digest,
+    make_typed_identity,
+    strict_parse_json,
+)
 from oma.trust import (
     SignedArtifact,
     TemporalHighWater,
@@ -44,6 +51,10 @@ def _artifact(artifact_id="artifact-1", epoch=1):
         issued_epoch=epoch,
         expires_epoch=epoch + 10,
     )
+
+
+def _schema():
+    return StrictSchema("schema", 1, frozenset({"n"}))
 
 
 def test_01_unregistered_trust_artifact_is_not_authoritative(tmp_path):
@@ -116,7 +127,12 @@ def test_09_same_id_in_different_namespaces_has_different_digest():
 def test_10_mixed_script_namespace_spoof_is_currently_accepted():
     policy = IdentityPolicy("id-policy")
     latin = make_typed_identity("subject", "123", policy)
-    spoof = make_typed_identity("ѕubject", "123", policy)  # Cyrillic small dze
+    spoof = make_typed_identity("ѕubject", "123", policy)
     assert latin.decision is IdentityDecision.ALLOW
     assert spoof.decision is IdentityDecision.ALLOW
     assert latin.identity != spoof.identity
+
+
+def test_11_duplicate_json_fields_are_blocked():
+    result = strict_parse_json('{"n":1,"n":2}', _schema())
+    assert result.decision is IdentityDecision.BLOCK
