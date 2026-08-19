@@ -151,3 +151,13 @@ def test_13_non_finite_json_number_is_blocked():
 def test_14_integer_outside_exact_interop_range_is_blocked():
     result = strict_parse_json('{"n":9007199254740992}', _schema())
     assert result.decision is IdentityDecision.BLOCK
+
+
+def test_15_integer_and_integral_float_are_both_accepted_with_different_runtime_types():
+    integer = strict_parse_json('{"n":1}', _schema())
+    floating = strict_parse_json('{"n":1.0}', _schema())
+    assert integer.decision is IdentityDecision.ALLOW
+    assert floating.decision is IdentityDecision.ALLOW
+    assert integer.value is not None and floating.value is not None
+    assert type(integer.value["n"]) is int
+    assert type(floating.value["n"]) is float
