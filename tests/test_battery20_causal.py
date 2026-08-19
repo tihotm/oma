@@ -5,7 +5,7 @@ from oma.trust import (
     TrustRoot,
     TrustRootStatus,
 )
-from oma.trust_registry import SQLiteTrustArtifactRegistry
+from oma.trust_registry import SQLiteTrustArtifactRegistry, TrustRegistryDecision
 
 
 def _ctx(context_id="ctx", epoch=1):
@@ -46,3 +46,9 @@ def _artifact(artifact_id="artifact-1", epoch=1):
 def test_01_unregistered_trust_artifact_is_not_authoritative(tmp_path):
     registry = SQLiteTrustArtifactRegistry(tmp_path / "oma.db")
     assert registry.get(_ctx(), _roots(), "artifact-1") is None
+
+
+def test_02_registered_artifact_cannot_cross_temporal_context(tmp_path):
+    registry = SQLiteTrustArtifactRegistry(tmp_path / "oma.db")
+    assert registry.register(_ctx(), _roots(), _artifact()).decision is TrustRegistryDecision.WRITTEN
+    assert registry.get(_ctx("ctx-other"), _roots(), "artifact-1") is None
