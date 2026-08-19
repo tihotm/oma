@@ -29,20 +29,15 @@ def execute_composed_pipeline(
 
     The pure evaluator intentionally leaves ``atomic_commit`` as NOT_DONE. This
     execution boundary replaces only that final observation, and only when all
-    prior observations are ACCEPT. No terminal database write occurs for
-    NOT_DONE, STALE or BLOCK prerequisite states.
+    prior observations are ACCEPT. The durable store independently re-evaluates
+    the same composed input so direct storage usage cannot bypass the closure.
     """
     evaluated = evaluate_composed_pipeline(pipeline_input)
     prior = tuple(item for item in evaluated.observations if item.node_id != "atomic_commit")
     if any(item.decision is not ValidationDecision.ACCEPT for item in prior):
         return evaluated
 
-    durable = terminal_store.commit(
-        pipeline_input.snapshot,
-        pipeline_input.commit_token,
-        pipeline_input.commit_state,
-        terminal_commit_id=pipeline_input.terminal_commit_id,
-    )
+    durable = terminal_store.commit(pipeline_input)
     mapped = {
         DurableCommitDecision.COMMITTED: ValidationDecision.ACCEPT,
         DurableCommitDecision.STALE: ValidationDecision.STALE,
