@@ -47,10 +47,10 @@ def execute_composed_pipeline(
 ) -> ComposedPipelineResult:
     """Evaluate against authoritative durable facts, then commit.
 
-    Caller-supplied ``commit_state``, ``retry_events`` and ``capabilities`` are
-    not final sources of truth when authoritative rows exist. The store repeats
-    all three lookups and re-evaluates the closure inside ``BEGIN IMMEDIATE``
-    to close the final read/commit race.
+    Caller-supplied state, retry history, capabilities and trust-artifact
+    metadata are not final sources of truth when authoritative rows exist. The
+    store repeats every lookup and re-evaluates the closure inside
+    ``BEGIN IMMEDIATE`` to close the final read/commit race.
     """
     authoritative_state = terminal_store.get_subject_state(
         pipeline_input.snapshot.subject_id
@@ -62,6 +62,11 @@ def execute_composed_pipeline(
     authoritative_capabilities = terminal_store.get_capabilities(
         pipeline_input.authority_context,
     )
+    authoritative_artifact = terminal_store.get_trust_artifact(
+        pipeline_input.trust_context,
+        pipeline_input.trust_roots,
+        pipeline_input.signed_artifact.artifact_id,
+    )
 
     replacements = {}
     if authoritative_state is not None:
@@ -70,6 +75,8 @@ def execute_composed_pipeline(
         replacements["retry_events"] = authoritative_retry_events
     if authoritative_capabilities is not None:
         replacements["capabilities"] = authoritative_capabilities
+    if authoritative_artifact is not None:
+        replacements["signed_artifact"] = authoritative_artifact
     effective_input = (
         pipeline_input if not replacements else replace(pipeline_input, **replacements)
     )
