@@ -168,6 +168,7 @@ def canonical_validation_graph() -> ValidationGraph:
         "policy_bundle",
         "snapshot_freshness",
         "provenance",
+        "obligation_integrity",
         "evidence_qualification",
         "aggregation",
         "retry_recovery",
@@ -182,7 +183,7 @@ def canonical_validation_graph() -> ValidationGraph:
         nodes.append(ValidationNode(name, deps))
         previous = name
     return ValidationGraph(
-        validation_graph_id="oma:canonical-validation:v2",
+        validation_graph_id="oma:canonical-validation:v3",
         nodes=tuple(nodes),
         terminal_node_id="atomic_commit",
     )
