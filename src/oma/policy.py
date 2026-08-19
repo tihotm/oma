@@ -54,9 +54,51 @@ def _canonical_value(value):
     return value
 
 
+def _legacy_evidence_payload_root(value) -> str | None:
+    """Preserve the established provenance digest for Evidence payloads.
+
+    Closure hardening started routing evidence payloads through
+    ``policy_object_root``. This compatibility branch keeps the already-published
+    ``oma:evidence:v1`` identity stable instead of silently changing provenance
+    semantics during that refactor.
+    """
+    if not isinstance(value, dict):
+        return None
+    required = (
+        "evidence_id",
+        "obligation_id",
+        "subject_id",
+        "subject_state_id",
+        "verification_context_id",
+        "policy_bundle_id",
+        "passed",
+    )
+    if set(value) != set(required):
+        return None
+    if not isinstance(value["passed"], bool):
+        return None
+    fields = (
+        value["evidence_id"],
+        value["obligation_id"],
+        value["subject_id"],
+        value["subject_state_id"],
+        value["verification_context_id"],
+        value["policy_bundle_id"],
+    )
+    if any(not isinstance(item, str) for item in fields):
+        return None
+    payload = "\0".join((*fields, "1" if value["passed"] else "0")).encode("utf-8")
+    return hashlib.sha256(b"oma:evidence:v1\0" + payload).hexdigest()
+
+
 def policy_object_root(policy_kind: str, value) -> str:
     if not policy_kind:
         raise ValueError("policy_kind must be non-empty")
+    if policy_kind == "evidence-payload":
+        legacy = _legacy_evidence_payload_root(value)
+        if legacy is None:
+            raise ValueError("invalid evidence payload")
+        return legacy
     canonical = json.dumps(
         _canonical_value(value),
         sort_keys=True,
