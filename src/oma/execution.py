@@ -45,21 +45,27 @@ def execute_composed_pipeline(
     pipeline_input: ComposedPipelineInput,
     terminal_store: SQLiteTerminalStore,
 ) -> ComposedPipelineResult:
-    """Evaluate against authoritative state, then commit through the durable CAS.
+    """Evaluate against authoritative durable state/history, then commit.
 
-    The caller-supplied ``commit_state`` is not used as the final source of
-    truth when the store has an authoritative subject state. The store repeats
-    the same lookup and evaluation inside ``BEGIN IMMEDIATE`` to close the
-    read/commit race. The final atomic observation is bound to the exact
-    durable snapshot, token and terminal commit identities so two distinct
-    durable outcomes cannot share the same final proof merely because their
-    precommit facts are otherwise identical.
+    Caller-supplied ``commit_state`` and ``retry_events`` are not final sources
+    of truth when authoritative rows exist. The store repeats both lookups and
+    re-evaluates the closure inside ``BEGIN IMMEDIATE`` to close the final race.
     """
-    authoritative = terminal_store.get_subject_state(pipeline_input.snapshot.subject_id)
+    authoritative_state = terminal_store.get_subject_state(
+        pipeline_input.snapshot.subject_id
+    )
+    authoritative_retry_events = terminal_store.get_retry_events(
+        pipeline_input.retry_policy,
+        pipeline_input.retry_domain,
+    )
+
+    replacements = {}
+    if authoritative_state is not None:
+        replacements["commit_state"] = authoritative_state
+    if authoritative_retry_events is not None:
+        replacements["retry_events"] = authoritative_retry_events
     effective_input = (
-        pipeline_input
-        if authoritative is None
-        else replace(pipeline_input, commit_state=authoritative)
+        pipeline_input if not replacements else replace(pipeline_input, **replacements)
     )
 
     evaluated = evaluate_composed_pipeline(effective_input)
