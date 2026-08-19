@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
-from oma.sqlite_commit import DurableCommitDecision, SQLiteTerminalStore
+from oma.sqlite_commit import DurableCommitDecision, SQLiteTerminalStore, SubjectStateDecision
 
 
 _pipeline_policy = runpy.run_path(str(Path(__file__).with_name("test_pipeline_policy.py")))
@@ -52,6 +52,7 @@ def fixture():
 def test_public_commit_revalidates_full_composed_closure(tmp_path):
     item = policy_enabled_input()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
+    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
     assert store.commit(item).decision is DurableCommitDecision.COMMITTED
     assert store.count() == 1
 
@@ -59,6 +60,7 @@ def test_public_commit_revalidates_full_composed_closure(tmp_path):
 def test_public_commit_blocks_incomplete_closure(tmp_path):
     item = replace(policy_enabled_input(), aggregation_policy=None)
     store = SQLiteTerminalStore(tmp_path / "oma.db")
+    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
     result = store.commit(item)
     assert result.decision is DurableCommitDecision.BLOCK
     assert result.reasons == ("durable_boundary_closure_incomplete",)
