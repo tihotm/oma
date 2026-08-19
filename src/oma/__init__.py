@@ -46,6 +46,11 @@ from .identity import (
     make_typed_identity,
     strict_parse_json,
 )
+from .pipeline import (
+    ComposedPipelineInput,
+    ComposedPipelineResult,
+    evaluate_composed_pipeline,
+)
 from .retry import (
     RetryDecision,
     RetryDomain,
@@ -116,6 +121,9 @@ __all__ = [
     "identity_digest",
     "make_typed_identity",
     "strict_parse_json",
+    "ComposedPipelineInput",
+    "ComposedPipelineResult",
+    "evaluate_composed_pipeline",
     "RetryDecision",
     "RetryDomain",
     "RetryEvent",
