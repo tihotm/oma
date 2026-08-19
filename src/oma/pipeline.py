@@ -91,9 +91,7 @@ def evaluate_composed_pipeline(
     observations.append(
         _observation(
             "parse_schema",
-            ValidationDecision.ACCEPT
-            if parsed.decision is IdentityDecision.ALLOW
-            else ValidationDecision.BLOCK,
+            ValidationDecision.ACCEPT if parsed.decision is IdentityDecision.ALLOW else ValidationDecision.BLOCK,
             parsed.reasons,
         )
     )
@@ -106,9 +104,7 @@ def evaluate_composed_pipeline(
     observations.append(
         _observation(
             "identity_namespace",
-            ValidationDecision.ACCEPT
-            if identity.decision is IdentityDecision.ALLOW
-            else ValidationDecision.BLOCK,
+            ValidationDecision.ACCEPT if identity.decision is IdentityDecision.ALLOW else ValidationDecision.BLOCK,
             identity.reasons,
         )
     )
@@ -119,9 +115,7 @@ def evaluate_composed_pipeline(
         ScopeDecision.REVIEW: ValidationDecision.NOT_DONE,
         ScopeDecision.BLOCK: ValidationDecision.BLOCK,
     }[scope.decision]
-    observations.append(
-        _observation("scope_integrity", scope_decision, scope.reasons)
-    )
+    observations.append(_observation("scope_integrity", scope_decision, scope.reasons))
 
     authority = evaluate_authority(
         pipeline_input.authority_context,
@@ -133,9 +127,7 @@ def evaluate_composed_pipeline(
         AuthorityDecision.STALE: ValidationDecision.STALE,
         AuthorityDecision.BLOCK: ValidationDecision.BLOCK,
     }[authority.decision]
-    observations.append(
-        _observation("authority_capability", authority_decision, authority.reasons)
-    )
+    observations.append(_observation("authority_capability", authority_decision, authority.reasons))
 
     trust = evaluate_trust(
         pipeline_input.trust_context,
@@ -147,108 +139,54 @@ def evaluate_composed_pipeline(
         TrustDecision.STALE: ValidationDecision.STALE,
         TrustDecision.BLOCK: ValidationDecision.BLOCK,
     }[trust.decision]
-    observations.append(
-        _observation("trust_temporal", trust_decision, trust.reasons)
-    )
+    observations.append(_observation("trust_temporal", trust_decision, trust.reasons))
 
-    observations.append(
-        _observation(
-            "policy_bundle",
-            ValidationDecision.NOT_DONE,
-            ("policy_bundle_not_implemented",),
-        )
-    )
-    observations.append(
-        _observation(
-            "snapshot_freshness",
-            ValidationDecision.NOT_DONE,
-            ("snapshot_freshness_not_implemented",),
-        )
-    )
-    observations.append(
-        _observation(
-            "provenance",
-            ValidationDecision.NOT_DONE,
-            ("provenance_not_implemented",),
-        )
-    )
+    observations.append(_observation("policy_bundle", ValidationDecision.NOT_DONE, ("policy_bundle_not_implemented",)))
+    observations.append(_observation("snapshot_freshness", ValidationDecision.NOT_DONE, ("snapshot_freshness_not_implemented",)))
+    observations.append(_observation("provenance", ValidationDecision.NOT_DONE, ("provenance_not_implemented",)))
 
-    if (
-        pipeline_input.expected_obligation_manifest is None
-        or pipeline_input.presented_obligation_manifest is None
-    ):
-        observations.append(
-            _observation(
-                "obligation_integrity",
-                ValidationDecision.NOT_DONE,
-                ("obligation_manifest_missing",),
-            )
-        )
+    if pipeline_input.expected_obligation_manifest is None or pipeline_input.presented_obligation_manifest is None:
+        observations.append(_observation("obligation_integrity", ValidationDecision.NOT_DONE, ("obligation_manifest_missing",)))
     else:
         obligation = evaluate_obligation_manifest(
             pipeline_input.expected_obligation_manifest,
             pipeline_input.presented_obligation_manifest,
-            acceptance_required_obligations=(
-                pipeline_input.acceptance_context.required_obligations
-            ),
+            acceptance_required_obligations=pipeline_input.acceptance_context.required_obligations,
         )
-        observations.append(
-            _observation(
-                "obligation_integrity",
-                ValidationDecision.ACCEPT
-                if obligation.decision is ObligationDecision.ALLOW
-                else ValidationDecision.BLOCK,
-                obligation.reasons,
-            )
+        obligation_reasons = obligation.reasons
+        obligation_decision = (
+            ValidationDecision.ACCEPT
+            if obligation.decision is ObligationDecision.ALLOW
+            else ValidationDecision.BLOCK
         )
+        if (
+            obligation.decision is ObligationDecision.ALLOW
+            and pipeline_input.snapshot.obligation_root != obligation.obligation_root
+        ):
+            obligation_decision = ValidationDecision.BLOCK
+            obligation_reasons = ("snapshot_obligation_root_mismatch",)
+        observations.append(_observation("obligation_integrity", obligation_decision, obligation_reasons))
 
-    acceptance = evaluate_acceptance(
-        pipeline_input.acceptance_context,
-        pipeline_input.evidence,
-    )
+    acceptance = evaluate_acceptance(pipeline_input.acceptance_context, pipeline_input.evidence)
     acceptance_decision = {
         AcceptanceDecision.ACCEPT: ValidationDecision.ACCEPT,
         AcceptanceDecision.NOT_DONE: ValidationDecision.NOT_DONE,
         AcceptanceDecision.BLOCK: ValidationDecision.BLOCK,
     }[acceptance.decision]
-    observations.append(
-        _observation(
-            "evidence_qualification",
-            acceptance_decision,
-            acceptance.reasons,
-        )
-    )
+    observations.append(_observation("evidence_qualification", acceptance_decision, acceptance.reasons))
 
-    observations.append(
-        _observation(
-            "aggregation",
-            ValidationDecision.NOT_DONE,
-            ("aggregation_not_implemented",),
-        )
-    )
+    observations.append(_observation("aggregation", ValidationDecision.NOT_DONE, ("aggregation_not_implemented",)))
 
-    retry = evaluate_retry_domain(
-        pipeline_input.retry_policy,
-        pipeline_input.retry_domain,
-        pipeline_input.retry_events,
-    )
+    retry = evaluate_retry_domain(pipeline_input.retry_policy, pipeline_input.retry_domain, pipeline_input.retry_events)
     observations.append(
         _observation(
             "retry_recovery",
-            ValidationDecision.ACCEPT
-            if retry.decision is RetryDecision.ALLOW
-            else ValidationDecision.BLOCK,
+            ValidationDecision.ACCEPT if retry.decision is RetryDecision.ALLOW else ValidationDecision.BLOCK,
             retry.reasons,
         )
     )
 
-    observations.append(
-        _observation(
-            "terminal_barrier",
-            ValidationDecision.NOT_DONE,
-            ("terminal_barrier_not_implemented",),
-        )
-    )
+    observations.append(_observation("terminal_barrier", ValidationDecision.NOT_DONE, ("terminal_barrier_not_implemented",)))
 
     commit = evaluate_commit(
         pipeline_input.snapshot,
@@ -262,20 +200,9 @@ def evaluate_composed_pipeline(
         CommitDecision.CONFLICT: ValidationDecision.BLOCK,
         CommitDecision.BLOCK: ValidationDecision.BLOCK,
     }[commit.decision]
-    observations.append(
-        _observation("commit_authorization", commit_decision, commit.reasons)
-    )
+    observations.append(_observation("commit_authorization", commit_decision, commit.reasons))
 
-    observations.append(
-        _observation(
-            "atomic_commit",
-            ValidationDecision.NOT_DONE,
-            ("atomic_commit_not_implemented",),
-        )
-    )
+    observations.append(_observation("atomic_commit", ValidationDecision.NOT_DONE, ("atomic_commit_not_implemented",)))
 
-    result = evaluate_validation_graph(
-        canonical_validation_graph(),
-        observations,
-    )
+    result = evaluate_validation_graph(canonical_validation_graph(), observations)
     return ComposedPipelineResult(result=result, observations=tuple(observations))
