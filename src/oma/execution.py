@@ -45,11 +45,12 @@ def execute_composed_pipeline(
     pipeline_input: ComposedPipelineInput,
     terminal_store: SQLiteTerminalStore,
 ) -> ComposedPipelineResult:
-    """Evaluate against authoritative durable state/history, then commit.
+    """Evaluate against authoritative durable facts, then commit.
 
-    Caller-supplied ``commit_state`` and ``retry_events`` are not final sources
-    of truth when authoritative rows exist. The store repeats both lookups and
-    re-evaluates the closure inside ``BEGIN IMMEDIATE`` to close the final race.
+    Caller-supplied ``commit_state``, ``retry_events`` and ``capabilities`` are
+    not final sources of truth when authoritative rows exist. The store repeats
+    all three lookups and re-evaluates the closure inside ``BEGIN IMMEDIATE``
+    to close the final read/commit race.
     """
     authoritative_state = terminal_store.get_subject_state(
         pipeline_input.snapshot.subject_id
@@ -58,12 +59,17 @@ def execute_composed_pipeline(
         pipeline_input.retry_policy,
         pipeline_input.retry_domain,
     )
+    authoritative_capabilities = terminal_store.get_capabilities(
+        pipeline_input.authority_context,
+    )
 
     replacements = {}
     if authoritative_state is not None:
         replacements["commit_state"] = authoritative_state
     if authoritative_retry_events is not None:
         replacements["retry_events"] = authoritative_retry_events
+    if authoritative_capabilities is not None:
+        replacements["capabilities"] = authoritative_capabilities
     effective_input = (
         pipeline_input if not replacements else replace(pipeline_input, **replacements)
     )
