@@ -177,3 +177,8 @@ def test_15_integer_and_integral_float_are_both_accepted_with_different_runtime_
 def test_16_scope_path_traversal_is_blocked():
     result = evaluate_scope(_scope(), (FileTransition("src/../secret", "a", "b"),))
     assert result.decision is ScopeDecision.BLOCK
+
+
+def test_17_changed_digest_with_untouched_claim_is_blocked():
+    result = evaluate_scope(_scope(), (FileTransition("src/app.py", "a", "b", touched=False),))
+    assert result.decision is ScopeDecision.BLOCK
