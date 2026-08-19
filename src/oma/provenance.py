@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 class ProvenanceDecision(StrEnum):
@@ -69,6 +69,7 @@ def evaluate_provenance(
     verification_context_id: str,
     policy_bundle_id: str,
     required_evidence_ids: frozenset[str],
+    required_evidence_digests: Mapping[str, str] | None = None,
 ) -> ProvenanceResult:
     items = tuple(nodes)
     if (
@@ -81,6 +82,9 @@ def evaluate_provenance(
         or not policy_bundle_id
     ):
         return ProvenanceResult(ProvenanceDecision.BLOCK, ("invalid_provenance_context",))
+
+    if required_evidence_digests is not None and set(required_evidence_digests) != set(required_evidence_ids):
+        return ProvenanceResult(ProvenanceDecision.BLOCK, ("evidence_digest_set_mismatch",))
 
     ids = [node.node_id for node in items]
     if not ids or not all(ids) or len(ids) != len(set(ids)):
@@ -118,6 +122,8 @@ def evaluate_provenance(
                 return ProvenanceResult(ProvenanceDecision.BLOCK, (f"invalid_evidence_binding:{node.node_id}",))
             if node.evidence_id in evidence_nodes:
                 return ProvenanceResult(ProvenanceDecision.BLOCK, (f"duplicate_evidence_provenance:{node.evidence_id}",))
+            if required_evidence_digests is not None and required_evidence_digests.get(node.evidence_id) != node.payload_digest:
+                return ProvenanceResult(ProvenanceDecision.BLOCK, (f"evidence_payload_digest_mismatch:{node.evidence_id}",))
             evidence_nodes[node.evidence_id] = node
 
     if set(evidence_nodes) != set(required_evidence_ids):
