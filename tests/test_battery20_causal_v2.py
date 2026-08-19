@@ -1,0 +1,20 @@
+from oma.scope import FileTransition, ScopeDecision, ScopePolicy, evaluate_scope
+
+
+def _scope_policy():
+    return ScopePolicy(
+        scope_policy_id="scope-v2",
+        allowed_paths=("src",),
+        forbidden_paths=("src/secret",),
+        protected_roles=frozenset({"protected"}),
+        review_roles=frozenset({"review"}),
+    )
+
+
+def test_01_changed_transition_cannot_claim_untouched():
+    result = evaluate_scope(
+        _scope_policy(),
+        (FileTransition("src/a.py", "before", "after", touched=False),),
+    )
+    assert result.decision is ScopeDecision.BLOCK
+    assert any("transition_history_inconsistent" in reason for reason in result.reasons)
