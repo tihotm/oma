@@ -13,7 +13,11 @@ from .commit import (
     CommitToken,
     evaluate_commit,
 )
-from .validation import ValidationDecision
+from .validation import (
+    ValidationDecision,
+    canonical_validation_graph,
+    validation_observation_digest,
+)
 
 if TYPE_CHECKING:
     from .pipeline import ComposedPipelineInput
@@ -60,6 +64,9 @@ class DurableTerminalRecord:
     evidence_root: str
     ledger_head: str
     state_version: int
+    validation_graph_id: str | None
+    terminal_barrier_root: str | None
+    precommit_closure_digest: str | None
 
 
 def _state_values(state: CommitState) -> tuple[object, ...]:
@@ -104,17 +111,13 @@ def _valid_state(state: CommitState) -> bool:
 
 
 class SQLiteTerminalStore:
-    """Authoritative subject-state CAS plus durable terminal commit boundary.
+    """Authoritative subject-state CAS plus self-auditing terminal commit.
 
-    Subject state is versioned in SQLite and terminal commit reads it inside the
-    same ``BEGIN IMMEDIATE`` transaction used to record the terminal result.
-    The caller's ``CommitState`` is therefore not the source of truth at the
-    final TOCTOU boundary.
-
-    Public ``commit`` independently re-evaluates the full composed pipeline
-    against that authoritative state before writing. SQLite WAL + FULL
-    synchronous durability and uniqueness constraints enforce one terminal row
-    per ``(subject_id, terminal_epoch)`` and single-use commit tokens.
+    Subject state is versioned in SQLite and read inside the same
+    ``BEGIN IMMEDIATE`` transaction used to record terminalization. Public
+    ``commit`` independently re-evaluates the composed closure against that
+    authoritative state and persists the graph id, real terminal-barrier root,
+    and a cryptographic digest over every pre-atomic validation observation.
     """
 
     _STATE_SELECT = """
@@ -168,10 +171,23 @@ class SQLiteTerminalStore:
                     evidence_root TEXT NOT NULL,
                     ledger_head TEXT NOT NULL,
                     state_version INTEGER NOT NULL CHECK (state_version >= 0),
+                    validation_graph_id TEXT,
+                    terminal_barrier_root TEXT,
+                    precommit_closure_digest TEXT,
                     UNIQUE(subject_id, terminal_epoch)
                 )
                 """
             )
+            columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(terminal_commits)")
+            }
+            for name in (
+                "validation_graph_id",
+                "terminal_barrier_root",
+                "precommit_closure_digest",
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE terminal_commits ADD COLUMN {name} TEXT")
 
     def initialize_subject_state(self, state: CommitState) -> SubjectStateResult:
         if not _valid_state(state):
@@ -214,14 +230,20 @@ class SQLiteTerminalStore:
         next_state: CommitState,
     ) -> SubjectStateResult:
         if expected_state_version < 0 or not _valid_state(next_state):
-            return SubjectStateResult(SubjectStateDecision.BLOCK, ("invalid_subject_state_update",))
+            return SubjectStateResult(
+                SubjectStateDecision.BLOCK,
+                ("invalid_subject_state_update",),
+            )
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(self._STATE_SELECT, (next_state.subject_id,)).fetchone()
             if row is None:
                 conn.rollback()
-                return SubjectStateResult(SubjectStateDecision.CONFLICT, ("subject_state_missing",))
+                return SubjectStateResult(
+                    SubjectStateDecision.CONFLICT,
+                    ("subject_state_missing",),
+                )
             current = _state_from_row(row)
             if current.state_version != expected_state_version:
                 conn.rollback()
@@ -267,7 +289,10 @@ class SQLiteTerminalStore:
             )
             if updated.rowcount != 1:
                 conn.rollback()
-                return SubjectStateResult(SubjectStateDecision.CONFLICT, ("subject_state_cas_conflict",))
+                return SubjectStateResult(
+                    SubjectStateDecision.CONFLICT,
+                    ("subject_state_cas_conflict",),
+                )
             conn.commit()
             return SubjectStateResult(SubjectStateDecision.WRITTEN, (), next_state)
         except sqlite3.DatabaseError as exc:
@@ -287,7 +312,7 @@ class SQLiteTerminalStore:
         return None if row is None else _state_from_row(row)
 
     def commit(self, pipeline_input: ComposedPipelineInput) -> DurableCommitResult:
-        """Atomically compare against authoritative state and record terminalization."""
+        """Atomically verify authoritative state, closure proof and terminal write."""
         from .pipeline import evaluate_composed_pipeline
 
         conn = self._connect()
@@ -303,6 +328,7 @@ class SQLiteTerminalStore:
                     DurableCommitDecision.BLOCK,
                     ("authoritative_subject_state_missing",),
                 )
+
             authoritative = _state_from_row(row)
             effective_input = replace(pipeline_input, commit_state=authoritative)
             evaluated = evaluate_composed_pipeline(effective_input)
@@ -327,6 +353,28 @@ class SQLiteTerminalStore:
                 return DurableCommitResult(
                     DurableCommitDecision.BLOCK,
                     ("durable_boundary_closure_incomplete",),
+                )
+
+            graph = canonical_validation_graph()
+            precommit_digest = validation_observation_digest(
+                graph,
+                prior,
+                domain="precommit",
+            )
+            terminal_observation = next(
+                (item for item in prior if item.node_id == "terminal_barrier"),
+                None,
+            )
+            if (
+                precommit_digest is None
+                or terminal_observation is None
+                or terminal_observation.decision is not ValidationDecision.ACCEPT
+                or not terminal_observation.evidence_root
+            ):
+                conn.rollback()
+                return DurableCommitResult(
+                    DurableCommitDecision.BLOCK,
+                    ("durable_closure_proof_invalid",),
                 )
 
             preliminary = evaluate_commit(
@@ -378,6 +426,9 @@ class SQLiteTerminalStore:
                 pipeline_input.snapshot,
                 pipeline_input.commit_token,
                 pipeline_input.terminal_commit_id,
+                validation_graph_id=graph.validation_graph_id,
+                terminal_barrier_root=terminal_observation.evidence_root,
+                precommit_closure_digest=precommit_digest,
             )
             conn.commit()
             return DurableCommitResult(
@@ -406,6 +457,10 @@ class SQLiteTerminalStore:
         snapshot: AcceptanceSnapshot,
         token: CommitToken,
         terminal_commit_id: str,
+        *,
+        validation_graph_id: str | None = None,
+        terminal_barrier_root: str | None = None,
+        precommit_closure_digest: str | None = None,
     ) -> None:
         conn.execute(
             """
@@ -413,8 +468,9 @@ class SQLiteTerminalStore:
                 terminal_commit_id, acceptance_snapshot_id, subject_id,
                 terminal_epoch, token_id, subject_state_id, policy_bundle_id,
                 policy_bundle_root, obligation_root, evidence_root,
-                ledger_head, state_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ledger_head, state_version, validation_graph_id,
+                terminal_barrier_root, precommit_closure_digest
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 terminal_commit_id,
@@ -429,6 +485,9 @@ class SQLiteTerminalStore:
                 snapshot.evidence_root,
                 snapshot.ledger_head,
                 snapshot.state_version,
+                validation_graph_id,
+                terminal_barrier_root,
+                precommit_closure_digest,
             ),
         )
 
@@ -441,7 +500,12 @@ class SQLiteTerminalStore:
         terminal_commit_id: str,
     ) -> DurableCommitResult:
         """SQL storage primitive for storage-level tests only."""
-        preliminary = evaluate_commit(snapshot, token, current, terminal_commit_id=terminal_commit_id)
+        preliminary = evaluate_commit(
+            snapshot,
+            token,
+            current,
+            terminal_commit_id=terminal_commit_id,
+        )
         if preliminary.decision is CommitDecision.BLOCK:
             return DurableCommitResult(DurableCommitDecision.BLOCK, preliminary.reasons)
         if preliminary.decision is CommitDecision.STALE:
@@ -476,7 +540,11 @@ class SQLiteTerminalStore:
                 )
             self._insert_terminal(conn, snapshot, token, terminal_commit_id)
             conn.commit()
-            return DurableCommitResult(DurableCommitDecision.COMMITTED, (), terminal_commit_id)
+            return DurableCommitResult(
+                DurableCommitDecision.COMMITTED,
+                (),
+                terminal_commit_id,
+            )
         except sqlite3.IntegrityError as exc:
             conn.rollback()
             return DurableCommitResult(
@@ -499,7 +567,9 @@ class SQLiteTerminalStore:
                 SELECT terminal_commit_id, acceptance_snapshot_id, subject_id,
                        terminal_epoch, token_id, subject_state_id,
                        policy_bundle_id, policy_bundle_root, obligation_root,
-                       evidence_root, ledger_head, state_version
+                       evidence_root, ledger_head, state_version,
+                       validation_graph_id, terminal_barrier_root,
+                       precommit_closure_digest
                 FROM terminal_commits WHERE terminal_commit_id = ?
                 """,
                 (terminal_commit_id,),
