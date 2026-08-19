@@ -6,6 +6,11 @@ from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING
 
+from .authority import AuthorityContext, Capability
+from .authority_registry import (
+    ensure_authority_schema,
+    load_authority_capabilities_from_connection,
+)
 from .commit import (
     AcceptanceSnapshot,
     CommitDecision,
@@ -113,13 +118,12 @@ def _valid_state(state: CommitState) -> bool:
 
 
 class SQLiteTerminalStore:
-    """Authoritative subject-state CAS plus self-auditing terminal commit.
+    """Authoritative state/history/capability CAS plus terminal commit.
 
-    Subject state and retry history are re-read inside the same
-    ``BEGIN IMMEDIATE`` transaction used to record terminalization. Public
-    ``commit`` independently re-evaluates the composed closure against those
-    authoritative facts and persists the graph id, real terminal-barrier root,
-    and a cryptographic digest over every pre-atomic validation observation.
+    Subject state, retry history, and issued capabilities are re-read inside
+    the same ``BEGIN IMMEDIATE`` transaction used to record terminalization.
+    Public ``commit`` independently re-evaluates the composed closure against
+    those authoritative facts before persisting the durable proof.
     """
 
     _STATE_SELECT = """
@@ -181,6 +185,7 @@ class SQLiteTerminalStore:
                 """
             )
             ensure_retry_schema(conn)
+            ensure_authority_schema(conn)
             columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(terminal_commits)")
             }
@@ -322,8 +327,15 @@ class SQLiteTerminalStore:
         with self._connect() as conn:
             return load_retry_events_from_connection(conn, domain, policy)
 
+    def get_capabilities(
+        self,
+        context: AuthorityContext,
+    ) -> tuple[Capability, ...] | None:
+        with self._connect() as conn:
+            return load_authority_capabilities_from_connection(conn, context)
+
     def commit(self, pipeline_input: ComposedPipelineInput) -> DurableCommitResult:
-        """Atomically verify authoritative state/history, closure and terminal write."""
+        """Atomically verify authoritative facts, closure and terminal write."""
         from .pipeline import evaluate_composed_pipeline
 
         conn = self._connect()
@@ -352,11 +364,23 @@ class SQLiteTerminalStore:
                     ("authoritative_retry_history_missing",),
                 )
 
+            authoritative_capabilities = load_authority_capabilities_from_connection(
+                conn,
+                pipeline_input.authority_context,
+            )
+            if authoritative_capabilities is None or not authoritative_capabilities:
+                conn.rollback()
+                return DurableCommitResult(
+                    DurableCommitDecision.BLOCK,
+                    ("authoritative_capabilities_missing",),
+                )
+
             authoritative = _state_from_row(row)
             effective_input = replace(
                 pipeline_input,
                 commit_state=authoritative,
                 retry_events=authoritative_retry_events,
+                capabilities=authoritative_capabilities,
             )
             evaluated = evaluate_composed_pipeline(effective_input)
             prior = tuple(
