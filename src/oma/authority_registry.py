@@ -78,8 +78,6 @@ def ensure_authority_schema(conn: sqlite3.Connection) -> None:
 
 
 def _set_encode(values: frozenset[str]) -> str:
-    # IDs/actions containing newlines are not accepted at this authoritative
-    # registry boundary; this avoids an ambiguous storage encoding.
     return "\n".join(sorted(values))
 
 
@@ -162,9 +160,11 @@ def load_authority_capabilities_from_connection(
 class SQLiteAuthorityRegistry:
     """Durable local issuance boundary for capabilities.
 
-    This closes caller fabrication at the supported SQLite trust boundary. It
-    does not claim cryptographic issuer authenticity against a hostile process;
-    that remains a separate trust-root/key problem.
+    Root grants are installed only during trusted context bootstrap. Later
+    ``issue`` calls may add delegated child capabilities, but cannot create new
+    roots. This closes issuer-name fabrication at the supported SQLite trust
+    boundary. It does not claim cryptographic issuer authenticity against a
+    hostile process; that remains a separate trust-root/key problem.
     """
 
     def __init__(self, path: str | Path):
@@ -272,6 +272,11 @@ class SQLiteAuthorityRegistry:
             return AuthorityRegistryResult(
                 AuthorityRegistryDecision.BLOCK,
                 ("invalid_authority_registry_capability",),
+            )
+        if capability.parent_capability_id is None:
+            return AuthorityRegistryResult(
+                AuthorityRegistryDecision.BLOCK,
+                ("post_bootstrap_root_issue_forbidden",),
             )
         conn = self._connect()
         try:
