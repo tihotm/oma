@@ -129,6 +129,8 @@ from .validation import (
     canonical_validation_graph,
     evaluate_validation_graph,
     required_closure,
+    validation_closure_digest,
+    validation_observation_digest,
 )
 
 __all__ = [
@@ -149,5 +151,5 @@ __all__ = [
     "DurableCommitDecision", "DurableCommitResult", "DurableTerminalRecord", "SQLiteTerminalStore", "SubjectStateDecision", "SubjectStateResult",
     "TerminalDecision", "TerminalPolicy", "TerminalResult", "canonical_terminal_policy", "evaluate_terminal_barrier",
     "SignedArtifact", "TemporalHighWater", "TrustContext", "TrustDecision", "TrustResult", "TrustRoot", "TrustRootStatus", "evaluate_trust",
-    "ValidationDecision", "ValidationGraph", "ValidationNode", "ValidationObservation", "ValidationResult", "canonical_validation_graph", "evaluate_validation_graph", "required_closure",
+    "ValidationDecision", "ValidationGraph", "ValidationNode", "ValidationObservation", "ValidationResult", "canonical_validation_graph", "evaluate_validation_graph", "required_closure", "validation_closure_digest", "validation_observation_digest",
 ]
