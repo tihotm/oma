@@ -6,6 +6,7 @@ from oma.authority_registry import AuthorityRegistryDecision, SQLiteAuthorityReg
 from oma.execution import execute_composed_pipeline
 from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import SQLiteTerminalStore, SubjectStateDecision
+from oma.trust_registry import SQLiteTrustArtifactRegistry, TrustRegistryDecision
 from oma.validation import ValidationDecision
 
 
@@ -28,6 +29,11 @@ def initialized_store(path, item):
         item.authority_context,
         item.capabilities,
     ).decision is AuthorityRegistryDecision.WRITTEN
+    assert SQLiteTrustArtifactRegistry(path).register(
+        item.trust_context,
+        item.trust_roots,
+        item.signed_artifact,
+    ).decision is TrustRegistryDecision.WRITTEN
     return store
 
 
@@ -109,11 +115,16 @@ def test_blocked_prerequisite_never_writes_database(tmp_path):
     assert store.count() == 0
 
 
+def bootstrap_retry_authority_trust(path, item):
+    SQLiteRetryLedger(path).initialize(item.retry_policy, item.retry_domain, item.retry_events[0])
+    SQLiteAuthorityRegistry(path).initialize_context(item.authority_context, item.capabilities)
+    SQLiteTrustArtifactRegistry(path).register(item.trust_context, item.trust_roots, item.signed_artifact)
+
+
 def test_missing_authoritative_state_cannot_commit(tmp_path):
     item = policy_enabled_input()
     path = tmp_path / "oma.db"
-    SQLiteRetryLedger(path).initialize(item.retry_policy, item.retry_domain, item.retry_events[0])
-    SQLiteAuthorityRegistry(path).initialize_context(item.authority_context, item.capabilities)
+    bootstrap_retry_authority_trust(path, item)
     store = SQLiteTerminalStore(path)
     result = execute_composed_pipeline(item, store)
     assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
@@ -127,6 +138,7 @@ def test_missing_authoritative_retry_history_cannot_commit(tmp_path):
     store = SQLiteTerminalStore(path)
     assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
     SQLiteAuthorityRegistry(path).initialize_context(item.authority_context, item.capabilities)
+    SQLiteTrustArtifactRegistry(path).register(item.trust_context, item.trust_roots, item.signed_artifact)
     result = execute_composed_pipeline(item, store)
     assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
     assert result.result.decision is ValidationDecision.BLOCK
@@ -139,6 +151,20 @@ def test_missing_authoritative_capabilities_cannot_commit(tmp_path):
     store = SQLiteTerminalStore(path)
     assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
     SQLiteRetryLedger(path).initialize(item.retry_policy, item.retry_domain, item.retry_events[0])
+    SQLiteTrustArtifactRegistry(path).register(item.trust_context, item.trust_roots, item.signed_artifact)
+    result = execute_composed_pipeline(item, store)
+    assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
+    assert result.result.decision is ValidationDecision.BLOCK
+    assert store.count() == 0
+
+
+def test_missing_authoritative_trust_artifact_cannot_commit(tmp_path):
+    item = policy_enabled_input()
+    path = tmp_path / "oma.db"
+    store = SQLiteTerminalStore(path)
+    assert store.initialize_subject_state(item.commit_state).decision is SubjectStateDecision.WRITTEN
+    SQLiteRetryLedger(path).initialize(item.retry_policy, item.retry_domain, item.retry_events[0])
+    SQLiteAuthorityRegistry(path).initialize_context(item.authority_context, item.capabilities)
     result = execute_composed_pipeline(item, store)
     assert by_node(result)["atomic_commit"].decision is ValidationDecision.BLOCK
     assert result.result.decision is ValidationDecision.BLOCK
