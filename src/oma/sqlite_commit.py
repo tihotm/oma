@@ -13,6 +13,8 @@ from .commit import (
     CommitToken,
     evaluate_commit,
 )
+from .retry import RetryDomain, RetryEvent, RetryPolicy
+from .retry_ledger import ensure_retry_schema, load_retry_events_from_connection
 from .validation import (
     ValidationDecision,
     canonical_validation_graph,
@@ -113,10 +115,10 @@ def _valid_state(state: CommitState) -> bool:
 class SQLiteTerminalStore:
     """Authoritative subject-state CAS plus self-auditing terminal commit.
 
-    Subject state is versioned in SQLite and read inside the same
+    Subject state and retry history are re-read inside the same
     ``BEGIN IMMEDIATE`` transaction used to record terminalization. Public
-    ``commit`` independently re-evaluates the composed closure against that
-    authoritative state and persists the graph id, real terminal-barrier root,
+    ``commit`` independently re-evaluates the composed closure against those
+    authoritative facts and persists the graph id, real terminal-barrier root,
     and a cryptographic digest over every pre-atomic validation observation.
     """
 
@@ -178,6 +180,7 @@ class SQLiteTerminalStore:
                 )
                 """
             )
+            ensure_retry_schema(conn)
             columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(terminal_commits)")
             }
@@ -311,8 +314,16 @@ class SQLiteTerminalStore:
             row = conn.execute(self._STATE_SELECT, (subject_id,)).fetchone()
         return None if row is None else _state_from_row(row)
 
+    def get_retry_events(
+        self,
+        policy: RetryPolicy,
+        domain: RetryDomain,
+    ) -> tuple[RetryEvent, ...] | None:
+        with self._connect() as conn:
+            return load_retry_events_from_connection(conn, domain, policy)
+
     def commit(self, pipeline_input: ComposedPipelineInput) -> DurableCommitResult:
-        """Atomically verify authoritative state, closure proof and terminal write."""
+        """Atomically verify authoritative state/history, closure and terminal write."""
         from .pipeline import evaluate_composed_pipeline
 
         conn = self._connect()
@@ -329,8 +340,24 @@ class SQLiteTerminalStore:
                     ("authoritative_subject_state_missing",),
                 )
 
+            authoritative_retry_events = load_retry_events_from_connection(
+                conn,
+                pipeline_input.retry_domain,
+                pipeline_input.retry_policy,
+            )
+            if authoritative_retry_events is None or not authoritative_retry_events:
+                conn.rollback()
+                return DurableCommitResult(
+                    DurableCommitDecision.BLOCK,
+                    ("authoritative_retry_history_missing",),
+                )
+
             authoritative = _state_from_row(row)
-            effective_input = replace(pipeline_input, commit_state=authoritative)
+            effective_input = replace(
+                pipeline_input,
+                commit_state=authoritative,
+                retry_events=authoritative_retry_events,
+            )
             evaluated = evaluate_composed_pipeline(effective_input)
             prior = tuple(
                 item for item in evaluated.observations
