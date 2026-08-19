@@ -59,6 +59,13 @@ from .pipeline import (
     ComposedPipelineResult,
     evaluate_composed_pipeline,
 )
+from .provenance import (
+    ProvenanceDecision,
+    ProvenanceNode,
+    ProvenancePolicy,
+    ProvenanceResult,
+    evaluate_provenance,
+)
 from .retry import (
     RetryDecision,
     RetryDomain,
@@ -138,6 +145,11 @@ __all__ = [
     "ComposedPipelineInput",
     "ComposedPipelineResult",
     "evaluate_composed_pipeline",
+    "ProvenanceDecision",
+    "ProvenanceNode",
+    "ProvenancePolicy",
+    "ProvenanceResult",
+    "evaluate_provenance",
     "RetryDecision",
     "RetryDomain",
     "RetryEvent",
