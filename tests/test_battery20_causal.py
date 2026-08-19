@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from oma.trust import (
     SignedArtifact,
     TemporalHighWater,
@@ -52,3 +54,11 @@ def test_02_registered_artifact_cannot_cross_temporal_context(tmp_path):
     registry = SQLiteTrustArtifactRegistry(tmp_path / "oma.db")
     assert registry.register(_ctx(), _roots(), _artifact()).decision is TrustRegistryDecision.WRITTEN
     assert registry.get(_ctx("ctx-other"), _roots(), "artifact-1") is None
+
+
+def test_03_registered_artifact_cannot_cross_root_set(tmp_path):
+    registry = SQLiteTrustArtifactRegistry(tmp_path / "oma.db")
+    roots = _roots()
+    assert registry.register(_ctx(), roots, _artifact()).decision is TrustRegistryDecision.WRITTEN
+    mutated_roots = (replace(roots[0], activated_epoch=1),)
+    assert registry.get(_ctx(), mutated_roots, "artifact-1") is None
