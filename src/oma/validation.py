@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import hashlib
 from typing import Iterable
 
 
@@ -37,6 +38,7 @@ class ValidationResult:
     decision: ValidationDecision
     reasons: tuple[str, ...] = ()
     validation_closure_root: tuple[str, ...] = ()
+    validation_closure_digest: str | None = None
 
 
 _PRECEDENCE = {
@@ -101,6 +103,48 @@ def required_closure(graph: ValidationGraph) -> frozenset[str]:
     return frozenset(closure)
 
 
+def validation_closure_digest(
+    graph: ValidationGraph,
+    observations: Iterable[ValidationObservation],
+) -> str | None:
+    """Hash the exact terminal closure, decisions and evidence roots."""
+    by_id, error = _validate_graph(graph)
+    if error is not None:
+        return None
+    items = tuple(observations)
+    ids = [item.node_id for item in items]
+    if len(ids) != len(set(ids)):
+        return None
+    if any(item.node_id not in by_id or not item.evidence_root for item in items):
+        return None
+
+    closure = required_closure(graph)
+    observed = {item.node_id: item for item in items}
+    if set(observed) != set(closure):
+        return None
+
+    ordered_ids = [node.node_id for node in graph.nodes if node.node_id in closure]
+    rows = [
+        "\0".join(
+            (
+                node_id,
+                observed[node_id].decision.value,
+                observed[node_id].evidence_root,
+            )
+        )
+        for node_id in ordered_ids
+    ]
+    payload = "\0".join(
+        (
+            "oma:validation-closure:v1",
+            graph.validation_graph_id,
+            graph.terminal_node_id,
+            "\n".join(rows),
+        )
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def evaluate_validation_graph(
     graph: ValidationGraph,
     observations: Iterable[ValidationObservation],
@@ -139,6 +183,7 @@ def evaluate_validation_graph(
             tuple(sorted(closure)),
         )
 
+    digest = validation_closure_digest(graph, items)
     worst = max(
         (observed[node_id].decision for node_id in closure),
         key=lambda decision: _PRECEDENCE[decision],
@@ -149,12 +194,18 @@ def evaluate_validation_graph(
             for node_id in sorted(closure)
             if observed[node_id].decision is worst
         )
-        return ValidationResult(worst, reasons, tuple(sorted(closure)))
+        return ValidationResult(
+            worst,
+            reasons,
+            tuple(sorted(closure)),
+            digest,
+        )
 
     return ValidationResult(
         ValidationDecision.ACCEPT,
         (),
         tuple(sorted(closure)),
+        digest,
     )
 
 
