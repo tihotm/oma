@@ -20,10 +20,11 @@ def full_accepting_observations(graph: ValidationGraph):
 def test_canonical_graph_contains_full_pipeline():
     graph = canonical_validation_graph()
     closure = required_closure(graph)
-    assert len(closure) == 14
+    assert len(closure) == 15
     assert "parse_schema" in closure
     assert "scope_integrity" in closure
     assert "trust_temporal" in closure
+    assert "obligation_integrity" in closure
     assert "atomic_commit" in closure
 
 
@@ -209,4 +210,4 @@ def test_validation_closure_root_is_stable_sorted_tuple():
     graph = canonical_validation_graph()
     result = evaluate_validation_graph(graph, full_accepting_observations(graph))
     assert result.validation_closure_root == tuple(sorted(result.validation_closure_root))
-    assert len(result.validation_closure_root) == 14
+    assert len(result.validation_closure_root) == 15
