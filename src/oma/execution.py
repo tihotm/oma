@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 
 from .pipeline import ComposedPipelineInput, ComposedPipelineResult, evaluate_composed_pipeline
@@ -25,19 +26,26 @@ def execute_composed_pipeline(
     pipeline_input: ComposedPipelineInput,
     terminal_store: SQLiteTerminalStore,
 ) -> ComposedPipelineResult:
-    """Evaluate every gate, then durably commit only after full prerequisite closure.
+    """Evaluate against authoritative state, then commit through the durable CAS.
 
-    The pure evaluator intentionally leaves ``atomic_commit`` as NOT_DONE. This
-    execution boundary replaces only that final observation, and only when all
-    prior observations are ACCEPT. The durable store independently re-evaluates
-    the same composed input so direct storage usage cannot bypass the closure.
+    The caller-supplied ``commit_state`` is not used as the final source of
+    truth when the store has an authoritative subject state. The store repeats
+    the same lookup and evaluation inside ``BEGIN IMMEDIATE`` to close the
+    read/commit race.
     """
-    evaluated = evaluate_composed_pipeline(pipeline_input)
+    authoritative = terminal_store.get_subject_state(pipeline_input.snapshot.subject_id)
+    effective_input = (
+        pipeline_input
+        if authoritative is None
+        else replace(pipeline_input, commit_state=authoritative)
+    )
+
+    evaluated = evaluate_composed_pipeline(effective_input)
     prior = tuple(item for item in evaluated.observations if item.node_id != "atomic_commit")
     if any(item.decision is not ValidationDecision.ACCEPT for item in prior):
         return evaluated
 
-    durable = terminal_store.commit(pipeline_input)
+    durable = terminal_store.commit(effective_input)
     mapped = {
         DurableCommitDecision.COMMITTED: ValidationDecision.ACCEPT,
         DurableCommitDecision.STALE: ValidationDecision.STALE,
