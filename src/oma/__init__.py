@@ -21,6 +21,12 @@ from .authority import (
     Capability,
     evaluate_authority,
 )
+from .authority_registry import (
+    AuthorityRegistryDecision,
+    AuthorityRegistryResult,
+    SQLiteAuthorityRegistry,
+    authority_context_digest,
+)
 from .commit import (
     AcceptanceSnapshot,
     CommitDecision,
@@ -143,6 +149,7 @@ __all__ = [
     "AcceptanceContext", "AcceptanceDecision", "AcceptanceResult", "Evidence", "evaluate_acceptance",
     "AggregationDecision", "AggregationItem", "AggregationPolicy", "AggregationResult", "aggregation_root", "evaluate_aggregation",
     "AuthorityContext", "AuthorityDecision", "AuthorityRequest", "AuthorityResult", "Capability", "evaluate_authority",
+    "AuthorityRegistryDecision", "AuthorityRegistryResult", "SQLiteAuthorityRegistry", "authority_context_digest",
     "AcceptanceSnapshot", "CommitDecision", "CommitResult", "CommitState", "CommitToken", "CommitTransition", "commit_if_current", "evaluate_commit",
     "RecoveryDecision", "RecoveryResult", "TerminalTransaction", "TransactionPhase", "advance_transaction", "observable_effect_ids", "recover_transaction", "validate_transaction",
     "execute_composed_pipeline",
