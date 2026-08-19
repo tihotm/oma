@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 import runpy
 
+from oma.authority_registry import AuthorityRegistryDecision, SQLiteAuthorityRegistry
 from oma.execution import execute_composed_pipeline
 from oma.pipeline import evaluate_composed_pipeline
 from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
@@ -31,6 +32,10 @@ def initialized_store(path, item):
         item.retry_domain,
         item.retry_events[0],
     ).decision is RetryLedgerDecision.WRITTEN
+    assert SQLiteAuthorityRegistry(path).initialize_context(
+        item.authority_context,
+        item.capabilities,
+    ).decision is AuthorityRegistryDecision.WRITTEN
     return store
 
 
