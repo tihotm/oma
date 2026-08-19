@@ -22,6 +22,7 @@ class AcceptanceSnapshot:
     ledger_head: str
     state_version: int
     terminal_epoch: int
+    policy_bundle_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class CommitState:
     terminal_epoch: int
     consumed_token_ids: frozenset[str] = frozenset()
     terminal_commit_ids: frozenset[str] = frozenset()
+    policy_bundle_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +107,7 @@ def evaluate_commit(
     for field in (
         "subject_state_id",
         "policy_bundle_id",
+        "policy_bundle_root",
         "obligation_root",
         "evidence_root",
         "ledger_head",
