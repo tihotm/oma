@@ -132,7 +132,10 @@ def evaluate_validation_graph(
     if irrelevant:
         return ValidationResult(
             ValidationDecision.BLOCK,
-            tuple(f"observation_outside_terminal_closure:{node_id}" for node_id in sorted(irrelevant)),
+            tuple(
+                f"observation_outside_terminal_closure:{node_id}"
+                for node_id in sorted(irrelevant)
+            ),
             tuple(sorted(closure)),
         )
 
@@ -159,7 +162,9 @@ def canonical_validation_graph() -> ValidationGraph:
     names = (
         "parse_schema",
         "identity_namespace",
+        "scope_integrity",
         "authority_capability",
+        "trust_temporal",
         "policy_bundle",
         "snapshot_freshness",
         "provenance",
@@ -177,7 +182,7 @@ def canonical_validation_graph() -> ValidationGraph:
         nodes.append(ValidationNode(name, deps))
         previous = name
     return ValidationGraph(
-        validation_graph_id="oma:canonical-validation:v1",
+        validation_graph_id="oma:canonical-validation:v2",
         nodes=tuple(nodes),
         terminal_node_id="atomic_commit",
     )
