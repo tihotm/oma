@@ -62,3 +62,11 @@ def test_03_registered_artifact_cannot_cross_root_set(tmp_path):
     assert registry.register(_ctx(), roots, _artifact()).decision is TrustRegistryDecision.WRITTEN
     mutated_roots = (replace(roots[0], activated_epoch=1),)
     assert registry.get(_ctx(), mutated_roots, "artifact-1") is None
+
+
+def test_04_same_artifact_id_cannot_be_registered_twice(tmp_path):
+    registry = SQLiteTrustArtifactRegistry(tmp_path / "oma.db")
+    first = registry.register(_ctx(), _roots(), _artifact())
+    second = registry.register(_ctx(), _roots(), replace(_artifact(), expires_epoch=99))
+    assert first.decision is TrustRegistryDecision.WRITTEN
+    assert second.decision is TrustRegistryDecision.CONFLICT
