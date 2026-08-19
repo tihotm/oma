@@ -46,6 +46,14 @@ from .identity import (
     make_typed_identity,
     strict_parse_json,
 )
+from .obligation import (
+    ObligationDecision,
+    ObligationManifest,
+    ObligationResult,
+    ObligationSpec,
+    evaluate_obligation_manifest,
+    obligation_root,
+)
 from .pipeline import (
     ComposedPipelineInput,
     ComposedPipelineResult,
@@ -121,6 +129,12 @@ __all__ = [
     "identity_digest",
     "make_typed_identity",
     "strict_parse_json",
+    "ObligationDecision",
+    "ObligationManifest",
+    "ObligationResult",
+    "ObligationSpec",
+    "evaluate_obligation_manifest",
+    "obligation_root",
     "ComposedPipelineInput",
     "ComposedPipelineResult",
     "evaluate_composed_pipeline",
