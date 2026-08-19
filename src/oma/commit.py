@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 
@@ -53,6 +53,12 @@ class CommitResult:
     reasons: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class CommitTransition:
+    result: CommitResult
+    state: CommitState
+
+
 def evaluate_commit(
     snapshot: AcceptanceSnapshot,
     token: CommitToken,
@@ -64,8 +70,7 @@ def evaluate_commit(
 
     Integrity violations fail closed as BLOCK. A legitimate drift since
     verification is STALE. Replays or an already-finalized terminal epoch are
-    CONFLICT. ALLOW means the compare-and-swap preconditions still hold; the
-    caller must consume the token and persist the terminal record atomically.
+    CONFLICT. ALLOW means compare-and-swap preconditions still hold.
     """
     if (
         not snapshot.acceptance_snapshot_id
@@ -115,3 +120,33 @@ def evaluate_commit(
         )
 
     return CommitResult(CommitDecision.ALLOW)
+
+
+def commit_if_current(
+    snapshot: AcceptanceSnapshot,
+    token: CommitToken,
+    current: CommitState,
+    *,
+    terminal_commit_id: str,
+) -> CommitTransition:
+    """Apply the in-memory CAS transition when authorization is still current.
+
+    This models the atomic state transition required from a durable adapter:
+    token consumption and terminal-record creation happen together. The
+    durable storage implementation is intentionally a later layer.
+    """
+    result = evaluate_commit(
+        snapshot,
+        token,
+        current,
+        terminal_commit_id=terminal_commit_id,
+    )
+    if result.decision is not CommitDecision.ALLOW:
+        return CommitTransition(result, current)
+
+    next_state = replace(
+        current,
+        consumed_token_ids=current.consumed_token_ids | {token.token_id},
+        terminal_commit_ids=current.terminal_commit_ids | {terminal_commit_id},
+    )
+    return CommitTransition(result, next_state)
