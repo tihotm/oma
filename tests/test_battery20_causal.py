@@ -70,3 +70,14 @@ def test_04_same_artifact_id_cannot_be_registered_twice(tmp_path):
     second = registry.register(_ctx(), _roots(), replace(_artifact(), expires_epoch=99))
     assert first.decision is TrustRegistryDecision.WRITTEN
     assert second.decision is TrustRegistryDecision.CONFLICT
+
+
+def test_05_temporal_high_water_is_not_durable_registry_state(tmp_path):
+    path = tmp_path / "oma.db"
+    registry = SQLiteTrustArtifactRegistry(path)
+    artifact = _artifact()
+    assert registry.register(_ctx(), _roots(), artifact).decision is TrustRegistryDecision.WRITTEN
+    reopened = SQLiteTrustArtifactRegistry(path)
+    # Probe: reopening retains the artifact but there is no persisted temporal
+    # high-water state to distinguish a later historical epoch from this old one.
+    assert reopened.get(_ctx(), _roots(), artifact.artifact_id) == artifact
