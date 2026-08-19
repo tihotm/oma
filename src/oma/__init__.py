@@ -15,6 +15,16 @@ from .commit import (
     commit_if_current,
     evaluate_commit,
 )
+from .durability import (
+    RecoveryDecision,
+    RecoveryResult,
+    TerminalTransaction,
+    TransactionPhase,
+    advance_transaction,
+    observable_effect_ids,
+    recover_transaction,
+    validate_transaction,
+)
 from .retry import (
     RetryDecision,
     RetryDomain,
@@ -40,6 +50,14 @@ __all__ = [
     "CommitTransition",
     "commit_if_current",
     "evaluate_commit",
+    "RecoveryDecision",
+    "RecoveryResult",
+    "TerminalTransaction",
+    "TransactionPhase",
+    "advance_transaction",
+    "observable_effect_ids",
+    "recover_transaction",
+    "validate_transaction",
     "RetryDecision",
     "RetryDomain",
     "RetryEvent",
