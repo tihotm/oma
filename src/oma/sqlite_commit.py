@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 import sqlite3
+from typing import TYPE_CHECKING
 
 from .commit import (
     AcceptanceSnapshot,
@@ -12,6 +13,10 @@ from .commit import (
     CommitToken,
     evaluate_commit,
 )
+from .validation import ValidationDecision
+
+if TYPE_CHECKING:
+    from .pipeline import ComposedPipelineInput
 
 
 class DurableCommitDecision(StrEnum):
@@ -45,12 +50,18 @@ class DurableTerminalRecord:
 
 
 class SQLiteTerminalStore:
-    """Durable single-transaction terminal commit adapter.
+    """Durable terminal store whose public commit boundary revalidates closure.
 
-    SQLite is configured for WAL + FULL synchronous durability. The terminal
-    record, snapshot binding and token consumption are represented by one row
-    committed inside BEGIN IMMEDIATE, with database constraints providing
-    single-use token and one-terminal-per-(subject, epoch) guarantees.
+    The public ``commit`` method accepts the complete composed pipeline input and
+    independently evaluates every prerequisite before entering the SQLite
+    transaction. The SQL-only primitive is private so production callers cannot
+    accidentally bypass authority, policy, provenance, aggregation, freshness,
+    retry or terminal-barrier checks by supplying only snapshot/token objects.
+
+    SQLite is configured for WAL + FULL synchronous durability. One committed
+    row represents terminal-record creation and token consumption atomically,
+    with uniqueness constraints enforcing single-use tokens and one terminal
+    record per ``(subject_id, terminal_epoch)``.
     """
 
     def __init__(self, path: str | Path):
@@ -87,7 +98,39 @@ class SQLiteTerminalStore:
                 """
             )
 
-    def commit(
+    def commit(self, pipeline_input: ComposedPipelineInput) -> DurableCommitResult:
+        """Re-evaluate the composed closure, then commit only an ACCEPT-ready input."""
+        from .pipeline import evaluate_composed_pipeline
+
+        evaluated = evaluate_composed_pipeline(pipeline_input)
+        prior = tuple(
+            item for item in evaluated.observations
+            if item.node_id != "atomic_commit"
+        )
+        if any(item.decision is ValidationDecision.BLOCK for item in prior):
+            return DurableCommitResult(
+                DurableCommitDecision.BLOCK,
+                ("durable_boundary_prerequisite_blocked",),
+            )
+        if any(item.decision is ValidationDecision.STALE for item in prior):
+            return DurableCommitResult(
+                DurableCommitDecision.STALE,
+                ("durable_boundary_prerequisite_stale",),
+            )
+        if any(item.decision is not ValidationDecision.ACCEPT for item in prior):
+            return DurableCommitResult(
+                DurableCommitDecision.BLOCK,
+                ("durable_boundary_closure_incomplete",),
+            )
+
+        return self._commit_prevalidated(
+            pipeline_input.snapshot,
+            pipeline_input.commit_token,
+            pipeline_input.commit_state,
+            terminal_commit_id=pipeline_input.terminal_commit_id,
+        )
+
+    def _commit_prevalidated(
         self,
         snapshot: AcceptanceSnapshot,
         token: CommitToken,
@@ -95,6 +138,7 @@ class SQLiteTerminalStore:
         *,
         terminal_commit_id: str,
     ) -> DurableCommitResult:
+        """SQL storage primitive. Production callers should use ``commit``."""
         preliminary = evaluate_commit(
             snapshot,
             token,
