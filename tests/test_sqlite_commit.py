@@ -4,11 +4,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 
 from oma.commit import AcceptanceSnapshot, CommitState, CommitToken
 from oma.sqlite_commit import DurableCommitDecision, SQLiteTerminalStore
+
+
+_pipeline_policy = runpy.run_path(str(Path(__file__).with_name("test_pipeline_policy.py")))
+policy_enabled_input = _pipeline_policy["policy_enabled_input"]
 
 
 def fixture():
@@ -44,10 +49,26 @@ def fixture():
     return snapshot, token, current
 
 
+def test_public_commit_revalidates_full_composed_closure(tmp_path):
+    item = policy_enabled_input()
+    store = SQLiteTerminalStore(tmp_path / "oma.db")
+    assert store.commit(item).decision is DurableCommitDecision.COMMITTED
+    assert store.count() == 1
+
+
+def test_public_commit_blocks_incomplete_closure(tmp_path):
+    item = replace(policy_enabled_input(), aggregation_policy=None)
+    store = SQLiteTerminalStore(tmp_path / "oma.db")
+    result = store.commit(item)
+    assert result.decision is DurableCommitDecision.BLOCK
+    assert result.reasons == ("durable_boundary_closure_incomplete",)
+    assert store.count() == 0
+
+
 def test_commit_persists_across_reopen(tmp_path):
     snapshot, token, current = fixture()
     path = tmp_path / "oma.db"
-    result = SQLiteTerminalStore(path).commit(snapshot, token, current, terminal_commit_id="terminal-1")
+    result = SQLiteTerminalStore(path)._commit_prevalidated(snapshot, token, current, terminal_commit_id="terminal-1")
     assert result.decision is DurableCommitDecision.COMMITTED
 
     reopened = SQLiteTerminalStore(path)
@@ -61,9 +82,9 @@ def test_commit_persists_across_reopen(tmp_path):
 def test_same_subject_epoch_competing_commit_conflicts(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
-    assert store.commit(snapshot, token, current, terminal_commit_id="terminal-1").decision is DurableCommitDecision.COMMITTED
+    assert store._commit_prevalidated(snapshot, token, current, terminal_commit_id="terminal-1").decision is DurableCommitDecision.COMMITTED
     competing = replace(token, token_id="token-2")
-    result = store.commit(snapshot, competing, current, terminal_commit_id="terminal-2")
+    result = store._commit_prevalidated(snapshot, competing, current, terminal_commit_id="terminal-2")
     assert result.decision is DurableCommitDecision.CONFLICT
     assert result.reasons == ("terminal_epoch_already_committed",)
     assert store.count() == 1
@@ -77,7 +98,7 @@ def test_concurrent_same_subject_epoch_has_one_winner(tmp_path):
     def attempt(index: int):
         local_store = SQLiteTerminalStore(path)
         local_token = replace(token, token_id=f"token-{index}")
-        return local_store.commit(
+        return local_store._commit_prevalidated(
             snapshot,
             local_token,
             current,
@@ -95,7 +116,7 @@ def test_concurrent_same_subject_epoch_has_one_winner(tmp_path):
 def test_token_replay_across_different_subject_conflicts(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
-    assert store.commit(snapshot, token, current, terminal_commit_id="terminal-1").decision is DurableCommitDecision.COMMITTED
+    assert store._commit_prevalidated(snapshot, token, current, terminal_commit_id="terminal-1").decision is DurableCommitDecision.COMMITTED
 
     other_snapshot = replace(
         snapshot,
@@ -108,7 +129,7 @@ def test_token_replay_across_different_subject_conflicts(tmp_path):
         subject_id="subject-2",
     )
     other_current = replace(current, subject_id="subject-2")
-    result = store.commit(other_snapshot, replay, other_current, terminal_commit_id="terminal-2")
+    result = store._commit_prevalidated(other_snapshot, replay, other_current, terminal_commit_id="terminal-2")
     assert result.decision is DurableCommitDecision.CONFLICT
     assert result.reasons == ("commit_token_replay",)
 
@@ -116,7 +137,7 @@ def test_token_replay_across_different_subject_conflicts(tmp_path):
 def test_stale_state_does_not_write(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
-    result = store.commit(
+    result = store._commit_prevalidated(
         snapshot,
         token,
         replace(current, state_version=2),
@@ -129,7 +150,7 @@ def test_stale_state_does_not_write(tmp_path):
 def test_invalid_token_binding_does_not_write(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
-    result = store.commit(
+    result = store._commit_prevalidated(
         snapshot,
         replace(token, subject_id="other"),
         current,
@@ -142,7 +163,7 @@ def test_invalid_token_binding_does_not_write(tmp_path):
 def test_policy_root_is_persisted(tmp_path):
     snapshot, token, current = fixture()
     store = SQLiteTerminalStore(tmp_path / "oma.db")
-    store.commit(snapshot, token, current, terminal_commit_id="terminal-1")
+    store._commit_prevalidated(snapshot, token, current, terminal_commit_id="terminal-1")
     assert store.get("terminal-1").policy_bundle_root == "policy-root-1"
 
 
@@ -180,7 +201,7 @@ path = sys.argv[1]
 s = AcceptanceSnapshot("snap","subject","state","policy","obligation","evidence","ledger",1,1,"policy-root")
 t = CommitToken("token","snap","subject",1)
 c = CommitState("subject","state","policy","obligation","evidence","ledger",1,1,policy_bundle_root="policy-root")
-r = SQLiteTerminalStore(path).commit(s,t,c,terminal_commit_id="terminal")
+r = SQLiteTerminalStore(path)._commit_prevalidated(s,t,c,terminal_commit_id="terminal")
 assert r.decision.value == "COMMITTED"
 os._exit(0)
 '''
