@@ -3,6 +3,7 @@ from pathlib import Path
 import runpy
 
 from oma.execution import execute_composed_pipeline
+from oma.retry_ledger import RetryLedgerDecision, SQLiteRetryLedger
 from oma.sqlite_commit import SQLiteTerminalStore, SubjectStateDecision
 from oma.validation import ValidationDecision
 
@@ -17,6 +18,9 @@ def initialized_store(path, item):
     store = SQLiteTerminalStore(path)
     result = store.initialize_subject_state(item.commit_state)
     assert result.decision is SubjectStateDecision.WRITTEN
+    assert SQLiteRetryLedger(path).initialize(
+        item.retry_policy, item.retry_domain, item.retry_events[0]
+    ).decision is RetryLedgerDecision.WRITTEN
     return store
 
 
@@ -30,8 +34,6 @@ def test_freely_chosen_token_id_is_not_an_authority_credential(tmp_path):
 
     result = execute_composed_pipeline(forged, store)
 
-    # Current supported semantics: CommitToken is a snapshot-bound, single-use
-    # nonce. Its token_id is not itself an authority credential.
     assert by_node(result)["authority_capability"].decision is ValidationDecision.ACCEPT
     assert by_node(result)["commit_authorization"].decision is ValidationDecision.ACCEPT
     assert by_node(result)["atomic_commit"].decision is ValidationDecision.ACCEPT
