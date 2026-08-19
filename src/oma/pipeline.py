@@ -8,6 +8,7 @@ from .acceptance import AcceptanceDecision, evaluate_acceptance
 from .authority import AuthorityDecision, evaluate_authority
 from .commit import CommitDecision, evaluate_commit
 from .identity import IdentityDecision, make_typed_identity, strict_parse_json
+from .obligation import ObligationDecision, evaluate_obligation_manifest
 from .retry import RetryDecision, evaluate_retry_domain
 from .scope import ScopeDecision, evaluate_scope
 from .trust import TrustDecision, evaluate_trust
@@ -44,6 +45,8 @@ class ComposedPipelineInput:
     commit_token: Any
     commit_state: Any
     terminal_commit_id: str
+    expected_obligation_manifest: Any | None = None
+    presented_obligation_manifest: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +172,35 @@ def evaluate_composed_pipeline(
             ("provenance_not_implemented",),
         )
     )
+
+    if (
+        pipeline_input.expected_obligation_manifest is None
+        or pipeline_input.presented_obligation_manifest is None
+    ):
+        observations.append(
+            _observation(
+                "obligation_integrity",
+                ValidationDecision.NOT_DONE,
+                ("obligation_manifest_missing",),
+            )
+        )
+    else:
+        obligation = evaluate_obligation_manifest(
+            pipeline_input.expected_obligation_manifest,
+            pipeline_input.presented_obligation_manifest,
+            acceptance_required_obligations=(
+                pipeline_input.acceptance_context.required_obligations
+            ),
+        )
+        observations.append(
+            _observation(
+                "obligation_integrity",
+                ValidationDecision.ACCEPT
+                if obligation.decision is ObligationDecision.ALLOW
+                else ValidationDecision.BLOCK,
+                obligation.reasons,
+            )
+        )
 
     acceptance = evaluate_acceptance(
         pipeline_input.acceptance_context,
