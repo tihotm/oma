@@ -23,3 +23,5 @@ def test_replay_after_store_reopen_remains_blocked(tmp_path):
     assert by_node(second)["atomic_commit"].decision is ValidationDecision.BLOCK
     assert second.result.decision is ValidationDecision.BLOCK
     assert reopened.count() == 1
+
+# CI synchronize trigger; no additional test semantics.
