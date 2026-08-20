@@ -39,3 +39,5 @@ def test_newer_registered_trust_epoch_prevents_old_context_terminalization(tmp_p
     result = execute_composed_pipeline(item, store)
     assert result.result.decision is ValidationDecision.BLOCK
     assert store.count() == 0
+
+# CI synchronize trigger; no additional test semantics.
